@@ -21,6 +21,7 @@
  </select>
  <select id="proj"><option value="AIT">Aitoff (all-sky)</option><option value="MOL">Mollweide</option><option value="SIN">Orthographic</option><option value="TAN">Flat</option></select>
  <button id="gridBtn">Grid</button>
+ <span id="sliceBox" style="display:none;align-items:center;gap:6px"><small>SPHEREx channel</small><input type="range" id="slice" min="0" max="101" value="50" style="width:140px;padding:0"><small id="sliceN">50</small></span>
 </div>
 <div class="panel" id="side">
  <div class="chips" id="chips"></div>
@@ -53,7 +54,27 @@ A.init.then(() => {
   document.getElementById('goBtn').onclick = () => { const v = document.getElementById('q').value, c = parse(v);
     if (c) jump(c.ra, c.dec, 600); else aladin.gotoObject(v, {success: p => select(p[0], p[1]), error: () => alert('Name not found')}); };
   document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('goBtn').click(); });
-  document.getElementById('survey').onchange = e => aladin.setImageSurvey(e.target.value);
+  aladin.setCooGrid({color:'#9fb0d9', opacity:0.14, labelSize:11});
+  const status = t => { document.getElementById('hint').textContent = t; };
+  let cubeLayer = null;
+  document.getElementById('survey').onchange = e => {
+    const url = e.target.value, isCube = url.indexOf('SPHEREx') >= 0, box = document.getElementById('sliceBox');
+    box.style.display = isCube ? 'flex' : 'none';
+    if (!isCube) { aladin.setImageSurvey(url); status('Scroll to zoom, drag to pan. Equatorial (ICRS) coordinates.'); return; }
+    status('Loading the SPHEREx all-sky cube...');
+    try {
+      cubeLayer = A.HiPS(url, {name: 'SPHEREx all-sky cube',
+        successCallback: h => { status('SPHEREx cube loaded. Move the channel slider to change wavelength. If the sky stays blank, the cube is not drawing: use another layer.');
+                                try { h.setSliceNumber && h.setSliceNumber(+document.getElementById('slice').value); } catch (x) {} },
+        errorCallback: err => { status('SPHEREx layer failed to load (' + err + '). Showing DSS2 instead.');
+                                aladin.setImageSurvey(document.querySelector('#survey option').value); box.style.display = 'none'; }});
+      aladin.setImageLayer(cubeLayer);
+    } catch (err) { status('SPHEREx layer error: ' + err); }
+  };
+  document.getElementById('slice').oninput = e => {
+    document.getElementById('sliceN').textContent = e.target.value;
+    try { cubeLayer && cubeLayer.setSliceNumber(+e.target.value); } catch (x) {}
+  };
   document.getElementById('proj').onchange = e => aladin.setProjection(e.target.value);
   let g = true; document.getElementById('gridBtn').onclick = () => { g = !g; aladin.showCooGrid(g); };
   document.getElementById('launch').onclick = () => {

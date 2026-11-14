@@ -61,3 +61,28 @@ def to_png_diff_b64(img, lim):
     buf = io.BytesIO()
     Image.fromarray(rgb, "RGB").save(buf, format="PNG", optimize=True)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+BG_RGB = (19, 22, 26)
+FG_RGB = (236, 240, 246)
+
+
+def to_dark_jpeg_b64(img, p, out_px=288, quality=90):
+    """Smooth, upsampled frame for the dark UI: stars light on the page colour, north up.
+
+    The float image is enlarged with bicubic filtering BEFORE the stretch, so the result is a soft
+    continuous picture (no square pixels). Unusable pixels are filled with the sky level so they do not flash.
+    """
+    a = np.flipud(np.asarray(img, np.float32))
+    a = np.where(np.isfinite(a), a, 0.0).astype(np.float32)
+    ny, nx = a.shape
+    up = max(2, int(np.ceil(out_px / max(nx, ny))))
+    big = np.asarray(Image.fromarray(a, "F").resize((nx * up, ny * up), Image.BICUBIC), np.float32)
+    lo, soft, hi = p["lo"], p["soft"], p["hi"]
+    f = np.arcsinh(np.clip(big - lo, 0, None) / soft) / np.arcsinh((hi - lo) / soft)
+    f = np.clip(np.nan_to_num(f, nan=0.0), 0, 1) ** 0.9
+    bg, fg = np.array(BG_RGB, np.float32), np.array(FG_RGB, np.float32)
+    rgb = (bg + f[..., None] * (fg - bg)).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(rgb, "RGB").save(buf, format="JPEG", quality=quality, subsampling=0)
+    return base64.b64encode(buf.getvalue()).decode("ascii")

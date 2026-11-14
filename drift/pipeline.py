@@ -107,7 +107,7 @@ def _crop_view(cube, view_arcsec):
 
 
 def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
-        progress=None, null_progress=None, seed=0, view_arcsec=None):
+        progress=None, null_progress=None, seed=0, view_arcsec=None, build=True):
     cube, info = load_frames(spec, demo=demo, progress=progress, seed=seed)
     cube = flatten(cube)
     if same_colour:
@@ -139,7 +139,7 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
 
     mx, my = vpos(m)
     in_view = -0.5 <= mx < vnx and -0.5 <= my < vny
-    payload = build_payload(vcube, vpos if in_field and in_view else None, v_exp, v_tr)
+    payload = build_payload(vcube, vpos if in_field and in_view else None, v_exp, v_tr) if build else None
 
     notes = []
     ra_c, dec_c = info["center"]
@@ -151,4 +151,5 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
         notes.append(f"{cube.n} of {cube.n_found or cube.n} {cube.detector} images used "
                      f"(wavelength {np.nanmin(cube.wl):.2f}-{np.nanmax(cube.wl):.2f} µm).")
     return dict(cube=cube, verdict=verdict, payload=payload, notes=notes, info=info,
-                v_expected=v_exp, center=(x0, y0), in_field=in_field)
+                v_expected=v_exp, center=(x0, y0), in_field=in_field,
+                mark_fn=(pos if in_field else None))

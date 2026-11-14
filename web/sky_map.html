@@ -1,0 +1,67 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ html,body{margin:0;height:100%;background:#05070d;color:#e6ecff;font-family:system-ui,sans-serif}
+ #aladin-lite-div{position:absolute;inset:0}
+ .panel{position:absolute;z-index:10;background:rgba(8,12,24,.9);border:1px solid #2a3556;border-radius:10px;padding:9px}
+ #top{top:8px;left:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100% - 24px)}
+ #side{bottom:8px;left:8px;max-width:calc(100% - 24px)}
+ input,select,button{background:#101830;color:#e6ecff;border:1px solid #2f3d66;border-radius:6px;padding:6px 8px;font-size:13px}
+ button{cursor:pointer} button:hover{background:#1b2a55} button.go{background:#2563eb;border-color:#3b82f6;font-weight:600}
+ .chips button{margin:2px 3px 0 0;font-size:12px}
+ #coords{font-family:ui-monospace,monospace;font-size:13px;margin:4px 0}
+ small{color:#9fb0d9}
+</style></head><body>
+<div id="aladin-lite-div"></div>
+<div class="panel" id="top">
+ <input id="q" placeholder="Object name, or RA Dec in degrees" size="34"><button id="goBtn">Go</button>
+ <select id="survey">
+  <option value="P/DSS2/color">Optical (DSS2)</option><option value="P/2MASS/color">Near-IR (2MASS)</option>
+  <option value="P/allWISE/color">Mid-IR (AllWISE)</option>
+  <option value="https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube">SPHEREx all-sky (IRSA, experimental)</option>
+ </select>
+ <select id="proj"><option value="AIT">Aitoff (all-sky)</option><option value="MOL">Mollweide</option><option value="SIN">Orthographic</option><option value="TAN">Flat</option></select>
+ <button id="gridBtn">Grid</button>
+</div>
+<div class="panel" id="side">
+ <div class="chips" id="chips"></div>
+ <div id="coords">Click the sky to pick a target</div>
+ <button class="go" id="launch">Use this position &rarr;</button>
+ <small id="hint">Scroll to zoom, drag to pan. Equatorial (ICRS) coordinates. Preset markers sit at their current (moved) positions.</small>
+</div>
+<script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+<script>
+const INIT = __INIT__;     // {ra, dec, fov, presets:[{key,name,ra,dec}]}
+let aladin, cat, sel = null;
+function select(ra, dec){
+  sel = {ra, dec};
+  document.getElementById('coords').textContent = 'RA ' + ra.toFixed(5) + '   Dec ' + dec.toFixed(5);
+  cat.removeAll(); cat.addSources([A.marker(ra, dec, {popupTitle:'Selected', popupDesc: ra.toFixed(5)+', '+dec.toFixed(5)})]);
+}
+function jump(ra, dec, fovArcsec){ aladin.gotoRaDec(ra, dec); aladin.setFoV((fovArcsec||600)/3600); select(ra, dec); }
+function parse(s){ const m = s.trim().match(/^(-?\d+(?:\.\d+)?)[ ,]+(-?\d+(?:\.\d+)?)$/); return m ? {ra:+m[1], dec:+m[2]} : null; }
+A.init.then(() => {
+  aladin = A.aladin('#aladin-lite-div', {survey:'P/DSS2/color', fov:360, target:'0 +0', projection:'AIT',
+                                          cooFrame:'ICRSd', showCooGrid:true, showFullscreenControl:false});
+  cat = A.catalog({name:'selected', shape:'cross', color:'#22d3ee', sourceSize:22}); aladin.addCatalog(cat);
+  const pre = A.catalog({name:'presets', shape:'circle', color:'#fbbf24', sourceSize:12, onClick:'showPopup'});
+  pre.addSources(INIT.presets.map(p => A.marker(p.ra, p.dec, {popupTitle:p.name, popupDesc:'current position'})));
+  aladin.addCatalog(pre);
+  aladin.on('click', e => { if (e && !e.isDragging && e.ra !== undefined) select(e.ra, e.dec); });
+  const chips = document.getElementById('chips');
+  INIT.presets.forEach(p => { const b = document.createElement('button'); b.textContent = p.name;
+    b.onclick = () => jump(p.ra, p.dec, 600); chips.appendChild(b); });
+  document.getElementById('goBtn').onclick = () => { const v = document.getElementById('q').value, c = parse(v);
+    if (c) jump(c.ra, c.dec, 600); else aladin.gotoObject(v, {success: p => select(p[0], p[1]), error: () => alert('Name not found')}); };
+  document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('goBtn').click(); });
+  document.getElementById('survey').onchange = e => aladin.setImageSurvey(e.target.value);
+  document.getElementById('proj').onchange = e => aladin.setProjection(e.target.value);
+  let g = true; document.getElementById('gridBtn').onclick = () => { g = !g; aladin.showCooGrid(g); };
+  document.getElementById('launch').onclick = () => {
+    if (!sel) { alert('Click the sky first'); return; }
+    const q = new URLSearchParams({ra: sel.ra.toFixed(6), dec: sel.dec.toFixed(6), fov: INIT.fov});
+    try { window.parent.location.search = '?' + q.toString(); }
+    catch (err) { prompt('Copy these into the RA / Dec boxes below:', sel.ra.toFixed(6) + ' ' + sel.dec.toFixed(6)); }
+  };
+  if (INIT.ra !== null) jump(INIT.ra, INIT.dec, 900);
+});
+</script></body></html>

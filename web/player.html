@@ -1,0 +1,87 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+ body{margin:0;font-family:system-ui,sans-serif;background:#fff;color:#111}
+ #bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+ button,select{font-size:14px;padding:5px 10px;border:1px solid #888;border-radius:6px;background:#f4f4f6;cursor:pointer}
+ button.on{background:#222;color:#fff;border-color:#222}
+ #label{font-weight:600;font-size:16px;margin:4px 0;min-height:22px}
+ #stage{display:flex;gap:12px;align-items:flex-start}
+ .pn{background:#fff}
+ canvas{border:1px solid #bbb;image-rendering:pixelated;background:#fff;display:block}
+ .cap{font-size:12px;color:#444;margin-top:3px;max-width:__CAPW__px}
+ #tl{position:relative;height:26px;margin:6px 0;border-bottom:1px solid #bbb}
+ .tk{position:absolute;bottom:0;width:2px;height:10px;background:#888}
+ .tk.cur{background:#d33;height:20px;width:3px}
+ #note{font-size:12px;color:#555;margin-top:4px}
+ input[type=range]{width:260px}
+</style></head><body>
+<div id="bar">
+ <button id="vFrames" class="on">All frames</button>
+ <button id="vBursts">Burst stacks</button>
+ <button id="vCompare">Fixed vs tracked stack</button>
+ <span style="width:12px"></span>
+ <button id="play">▶ Play</button><button id="prev">◀</button><button id="next">▶</button>
+ <input id="scrub" type="range" min="0" max="0" value="0">
+ <label>speed <select id="fps"><option value="1">1 fps</option><option value="2" selected>2 fps</option><option value="4">4 fps</option><option value="8">8 fps</option></select></label>
+ <label><input id="mk" type="checkbox"> mark expected position</label>
+</div>
+<div id="label"></div>
+<div id="stage"></div>
+<div id="tl"></div>
+<div id="note"></div>
+<script>
+const D = __DATA__;
+const views = D.views, Z = D.zoom, NX = D.nx, NY = D.ny;
+let view = 'frames', idx = 0, playing = false, timer = null, showMark = false;
+const stage = document.getElementById('stage');
+// preload + decode every image once so playback never stalls (smoothness)
+const cache = {};
+let pending = 0;
+function pre(b64){ if(cache[b64]) return; const im = new Image(); pending++; im.onload = ()=>{pending--; if(!pending) draw();}; im.src = 'data:image/png;base64,'+b64; cache[b64] = im; }
+for (const k in views) views[k].forEach(it => it.imgs.forEach(pre));
+function draw(){
+  const items = views[view]; if(!items.length) return;
+  idx = Math.max(0, Math.min(idx, items.length-1));
+  const it = items[idx];
+  document.getElementById('label').textContent = it.label;
+  if (stage.dataset.view !== view){
+    stage.innerHTML = ''; stage.dataset.view = view;
+    it.imgs.forEach((_,j)=>{
+      const w = document.createElement('div'); w.className='pn';
+      const c = document.createElement('canvas'); c.width=NX*Z; c.height=NY*Z; c.id='c'+j; w.appendChild(c);
+      const cap = document.createElement('div'); cap.className='cap'; cap.id='cap'+j; w.appendChild(cap);
+      stage.appendChild(w);
+    });
+  }
+  it.imgs.forEach((b64,j)=>{
+    const c = document.getElementById('c'+j), g = c.getContext('2d');
+    g.imageSmoothingEnabled = false; g.clearRect(0,0,c.width,c.height);
+    g.drawImage(cache[b64], 0, 0, c.width, c.height);
+    const m = it.marks && it.marks[j];
+    if (showMark && m){ g.strokeStyle='#e11'; g.lineWidth=2; g.beginPath(); g.arc((m[0]+0.5)*Z,(m[1]+0.5)*Z,Math.max(2.2*Z,10),0,6.283); g.stroke(); }
+    document.getElementById('cap'+j).textContent = it.captions ? it.captions[j] : '';
+  });
+  document.getElementById('scrub').max = items.length-1; document.getElementById('scrub').value = idx;
+  // epoch tick strip: shows the real, clustered observing cadence
+  const tl = document.getElementById('tl'); tl.innerHTML='';
+  const span = Math.max(D.t1-D.t0, 1), W = tl.clientWidth || 600;
+  items.forEach((x,i)=>{ const t=document.createElement('div'); t.className='tk'+(i===idx?' cur':''); t.style.left=((x.mjd-D.t0)/span*(W-6))+'px'; tl.appendChild(t); });
+}
+function step(d){ const n=views[view].length; idx=(idx+d+n)%n; draw(); }
+function setPlaying(p){ playing=p; document.getElementById('play').textContent = p?'❚❚ Pause':'▶ Play';
+  clearInterval(timer); if(p) timer=setInterval(()=>step(1), 1000/parseFloat(document.getElementById('fps').value)); }
+function setView(v){ view=v; idx=0; stage.dataset.view=''; ['Frames','Bursts','Compare'].forEach(n=>document.getElementById('v'+n).classList.toggle('on', n.toLowerCase()===v)); draw(); setPlaying(v!=='compare'?playing:false); }
+document.getElementById('vFrames').onclick=()=>setView('frames');
+document.getElementById('vBursts').onclick=()=>setView('bursts');
+document.getElementById('vCompare').onclick=()=>setView('compare');
+document.getElementById('play').onclick=()=>setPlaying(!playing);
+document.getElementById('prev').onclick=()=>step(-1);
+document.getElementById('next').onclick=()=>step(1);
+document.getElementById('scrub').oninput=e=>{idx=parseInt(e.target.value); draw();};
+document.getElementById('fps').onchange=()=>{ if(playing) setPlaying(true); };
+document.getElementById('mk').onchange=e=>{showMark=e.target.checked; draw();};
+document.addEventListener('keydown',e=>{ if(e.key===' '){e.preventDefault();setPlaying(!playing);} if(e.key==='ArrowRight')step(1); if(e.key==='ArrowLeft')step(-1); });
+document.getElementById('note').textContent = (D.source==='SYNTHETIC'?'SYNTHETIC DEMO DATA (not real SPHEREx images). ':'') +
+  'One fixed brightness scale for every frame; stars dark on white; north up, east left. Detector '+D.detector+'. Frames come in bursts separated by months, so the strip above is uneven by design.';
+if(!pending) draw();
+</script></body></html>

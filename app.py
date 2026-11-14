@@ -145,6 +145,9 @@ same = e1.checkbox("Same colour only", value=False,
                    help="Keep only frames at nearly the same wavelength so brightness changes are real.")
 demo = e2.checkbox("Use synthetic demo data", value=False,
                    help="Simulated frames, for trying the tool without IRSA. Clearly labelled.")
+view = e2.selectbox("Patch shown (arcsec)", [40, 60, 90, 120, "Full field"], index=1,
+                    help="Zoom the frames to a small patch around the target so a pixel or two of motion is "
+                         "easy to see against the stars around it. The verdict always uses the full field.")
 run = st.button("Show frames and check motion", type="primary")
 
 # -------------------------------------------------------------- run --------
@@ -168,7 +171,8 @@ if run:
             bar.progress(0.6 + 0.4 * k / n, text="Checking the motion against scrambled data…")
 
         res = pipeline.run(spec, mode="blind" if blind else "target", same_colour=same, demo=demo,
-                           n_null=60 if blind else 300, progress=dl, null_progress=nl)
+                           n_null=60 if blind else 300, progress=dl, null_progress=nl,
+                           view_arcsec=None if view == "Full field" else float(view))
         bar.empty()
         st.session_state.result = res
     except irsa.IrsaError as e:

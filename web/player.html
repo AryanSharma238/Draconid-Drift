@@ -23,7 +23,7 @@
  <button id="play">▶ Play</button><button id="prev">◀</button><button id="next">▶</button>
  <input id="scrub" type="range" min="0" max="0" value="0">
  <label>speed <select id="fps"><option value="1">1 fps</option><option value="2" selected>2 fps</option><option value="4">4 fps</option><option value="8">8 fps</option></select></label>
- <label><input id="mk" type="checkbox"> mark expected position</label>
+ <label><input id="mk" type="checkbox"> mark expected position, start (square) and path</label>
 </div>
 <div id="label"></div>
 <div id="stage"></div>
@@ -58,6 +58,12 @@ function draw(){
     g.imageSmoothingEnabled = false; g.clearRect(0,0,c.width,c.height);
     g.drawImage(cache[b64], 0, 0, c.width, c.height);
     const m = it.marks && it.marks[j];
+    if (showMark && D.track && it.marks && it.marks[j] && !it.captions){
+      const a=D.track[0], b=D.track[1];
+      g.strokeStyle='#0a8'; g.lineWidth=1.5; g.setLineDash([6,4]); g.beginPath();
+      g.moveTo((a[0]+0.5)*Z,(a[1]+0.5)*Z); g.lineTo((b[0]+0.5)*Z,(b[1]+0.5)*Z); g.stroke(); g.setLineDash([]);
+      g.strokeRect((a[0]+0.5)*Z-6,(a[1]+0.5)*Z-6,12,12);
+    }
     if (showMark && m){ g.strokeStyle='#e11'; g.lineWidth=2; g.beginPath(); g.arc((m[0]+0.5)*Z,(m[1]+0.5)*Z,Math.max(2.2*Z,10),0,6.283); g.stroke(); }
     document.getElementById('cap'+j).textContent = it.captions ? it.captions[j] : '';
   });
@@ -82,6 +88,6 @@ document.getElementById('fps').onchange=()=>{ if(playing) setPlaying(true); };
 document.getElementById('mk').onchange=e=>{showMark=e.target.checked; draw();};
 document.addEventListener('keydown',e=>{ if(e.key===' '){e.preventDefault();setPlaying(!playing);} if(e.key==='ArrowRight')step(1); if(e.key==='ArrowLeft')step(-1); });
 document.getElementById('note').textContent = (D.source==='SYNTHETIC'?'SYNTHETIC DEMO DATA (not real SPHEREx images). ':'') +
-  'One fixed brightness scale for every frame; stars dark on white; north up, east left. Detector '+D.detector+'. Frames come in bursts separated by months, so the strip above is uneven by design.';
+  'One fixed brightness scale for every frame; stars dark on white; north up, east left. Pale blue squares = masked pixels with no usable data (bad detector pixels, saturated star cores, or outside the frame). Detector '+D.detector+'. Frames come in bursts separated by months, so the strip above is uneven by design.';
 if(!pending) draw();
 </script></body></html>

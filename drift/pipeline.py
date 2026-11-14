@@ -93,8 +93,21 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
 
 
 # ------------------------------------------------------------------- run ----
+def _crop_view(cube, view_arcsec):
+    """Centre crop for display only (the verdict always uses the full field). Returns (cube, x0, y0)."""
+    ny, nx = cube.cube.shape[1:]
+    if not view_arcsec or view_arcsec >= min(nx, ny) * 6.15 - 1:
+        return cube, 0, 0
+    half = max(4, int(round(view_arcsec / 6.15 / 2)))
+    cy, cx = ny // 2, nx // 2
+    y0, y1, x0, x1 = cy - half, cy + half, cx - half, cx + half
+    sub = Cube(cube.cube[:, y0:y1, x0:x1], cube.var[:, y0:y1, x0:x1], cube.mjd, cube.wl, cube.wcs,
+               cube.detector, cube.source, cube.n_found)
+    return sub, x0, y0
+
+
 def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
-        progress=None, null_progress=None, seed=0):
+        progress=None, null_progress=None, seed=0, view_arcsec=None):
     cube, info = load_frames(spec, demo=demo, progress=progress, seed=seed)
     cube = flatten(cube)
     if same_colour:
@@ -117,7 +130,16 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
     verdict = assess(cube, mode=mode, v0=v_exp, center=(x0, y0), n_null=n_null,
                      seed=seed + 1, progress=null_progress)
     v_tr = (verdict["best"]["vx"], verdict["best"]["vy"]) if mode == "blind" else v_exp
-    payload = build_payload(cube, pos if in_field else None, v_exp, v_tr)
+    vcube, ox, oy = _crop_view(cube, view_arcsec)
+    vny, vnx = vcube.cube.shape[1:]
+
+    def vpos(mjd):
+        x, y = pos(mjd)
+        return x - ox, y - oy
+
+    mx, my = vpos(m)
+    in_view = -0.5 <= mx < vnx and -0.5 <= my < vny
+    payload = build_payload(vcube, vpos if in_field and in_view else None, v_exp, v_tr)
 
     notes = []
     ra_c, dec_c = info["center"]

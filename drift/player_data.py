@@ -60,7 +60,13 @@ def build_payload(cube: Cube, expected_xy, v_expected, v_tracked, zoom=None):
                               "Tracked stack: the mover sharpens, stars smear"],
                     label=f"all {n} frames stacked", marks=[cmark, cmark], mjd=mm)]
 
-    return dict(nx=int(nx), ny=int(ny), zoom=int(zoom),
+    track = None
+    if expected_xy:
+        a, b = mark(float(cube.mjd.min())), mark(float(cube.mjd.max()))
+        if a and b:
+            track = [a, b]
+
+    return dict(nx=int(nx), ny=int(ny), zoom=int(zoom), track=track,
                 views=dict(frames=frames, bursts=bursts, compare=compare),
                 detector=cube.detector, source=cube.source,
                 t0=float(cube.mjd.min()), t1=float(cube.mjd.max()))

@@ -113,41 +113,19 @@ html = open(os.path.join(HERE, "web", "sky_map.html"), encoding="utf-8").read()
 show_html(html.replace("__INIT__", json.dumps(init)), 520)
 
 # -------------------------------------------------------------- form -------
-st.subheader("2. Target and options")
+st.subheader("2. Target")
 st.caption("Pick one of the five test stars, or type RA and Dec yourself (or use the map above).")
 bcols = st.columns(len(PRESETS))
 for col, t in zip(bcols, PRESETS.values()):
     col.button(t.name, key=f"pb_{t.key}", on_click=set_preset, args=(t.key,), use_container_width=True,
                type="primary" if st.session_state.preset == t.name else "secondary")
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 c1.number_input("RA (deg)", key="ra", value=None, format="%.6f", placeholder="empty: pick a star or type")
 c2.number_input("Dec (deg)", key="dec", value=None, format="%.6f", placeholder="empty: pick a star or type")
-c3.number_input("Field of view (arcsec)", key="fov", min_value=90.0, max_value=600.0, step=30.0)
-d0, d1, d2, d3 = st.columns([2, 2, 2, 2])
-d0.number_input("Proper motion RA* (mas/yr)", key="pmra", value=None, format="%.1f", placeholder="empty = 0")
-d1.number_input("Proper motion Dec (mas/yr)", key="pmdec", value=None, format="%.1f", placeholder="empty = 0")
-d2.number_input("Epoch of the coordinates", key="epoch", value=None, format="%.2f", placeholder="empty = now",
-                help="Coordinates are moved from this epoch to the SPHEREx epoch before searching.")
-d3.selectbox("Detector array", irsa.DETECTORS, key="det",
-             format_func=lambda d: f"{d[-2:]} ({irsa.DETECTOR_RANGE[d]} µm)")
 if st.session_state.preset in [t.name for t in PRESETS.values()]:
     t = next(t for t in PRESETS.values() if t.name == st.session_state.preset)
     st.info(t.story + (" " + t.epoch_note if t.epoch_note else ""))
-st.button("Centre on the brightest star within 90 arcsec (SIMBAD)", on_click=snap_to_star,
-          help="Fixes a click that missed the star, and fills in its proper motion.")
-if st.session_state.get("snap_msg"):
-    st.caption(st.session_state.snap_msg)
-e0, e1, e2 = st.columns([2, 2, 2])
-mode = e0.radio("Verdict mode", ["Check this target", "Blind scan of the whole patch"],
-                help="Target check searches near the expected position and motion. "
-                     "Blind scan searches every position and speed (slower, stricter).")
-same = e1.checkbox("Same colour only", value=False,
-                   help="Keep only frames at nearly the same wavelength so brightness changes are real.")
-demo = e2.checkbox("Use synthetic demo data", value=False,
-                   help="Simulated frames, for trying the tool without IRSA. Clearly labelled.")
-view = e2.selectbox("Patch shown (arcsec)", [40, 60, 90, 120, "Full field"], index=1,
-                    help="Zoom the frames to a small patch around the target so a pixel or two of motion is "
-                         "easy to see against the stars around it. The verdict always uses the full field.")
+mode, same, demo, view = "Check this target", False, False, "Full field"
 run = st.button("Show frames and check motion", type="primary")
 
 # -------------------------------------------------------------- run --------

@@ -18,11 +18,13 @@
 <div id="bar">
  <button id="vFrames" class="on">All frames</button>
  <button id="vBursts">Burst stacks</button>
+ <button id="vDiff">Change since first burst</button>
  <button id="vCompare">Fixed vs tracked stack</button>
  <span style="width:12px"></span>
  <button id="play">▶ Play</button><button id="prev">◀</button><button id="next">▶</button>
  <input id="scrub" type="range" min="0" max="0" value="0">
  <label>speed <select id="fps"><option value="1">1 fps</option><option value="2" selected>2 fps</option><option value="4">4 fps</option><option value="8">8 fps</option></select></label>
+ <label><input id="sm" type="checkbox" checked> smooth zoom</label>
  <label><input id="mk" type="checkbox"> mark expected position, start (square) and path</label>
 </div>
 <div id="label"></div>
@@ -32,7 +34,7 @@
 <script>
 const D = __DATA__;
 const views = D.views, Z = D.zoom, NX = D.nx, NY = D.ny;
-let view = 'frames', idx = 0, playing = false, timer = null, showMark = false;
+let view = 'frames', idx = 0, playing = false, timer = null, showMark = false, smooth = true;
 const stage = document.getElementById('stage');
 // preload + decode every image once so playback never stalls (smoothness)
 const cache = {};
@@ -55,10 +57,10 @@ function draw(){
   }
   it.imgs.forEach((b64,j)=>{
     const c = document.getElementById('c'+j), g = c.getContext('2d');
-    g.imageSmoothingEnabled = false; g.clearRect(0,0,c.width,c.height);
+    g.imageSmoothingEnabled = smooth; c.style.imageRendering = smooth ? 'auto' : 'pixelated'; g.clearRect(0,0,c.width,c.height);
     g.drawImage(cache[b64], 0, 0, c.width, c.height);
     const m = it.marks && it.marks[j];
-    if (showMark && D.track && it.marks && it.marks[j] && !it.captions){
+    if (showMark && D.track && it.marks && it.marks[j] && view !== 'compare'){
       const a=D.track[0], b=D.track[1];
       g.strokeStyle='#0a8'; g.lineWidth=1.5; g.setLineDash([6,4]); g.beginPath();
       g.moveTo((a[0]+0.5)*Z,(a[1]+0.5)*Z); g.lineTo((b[0]+0.5)*Z,(b[1]+0.5)*Z); g.stroke(); g.setLineDash([]);
@@ -76,10 +78,13 @@ function draw(){
 function step(d){ const n=views[view].length; idx=(idx+d+n)%n; draw(); }
 function setPlaying(p){ playing=p; document.getElementById('play').textContent = p?'❚❚ Pause':'▶ Play';
   clearInterval(timer); if(p) timer=setInterval(()=>step(1), 1000/parseFloat(document.getElementById('fps').value)); }
-function setView(v){ view=v; idx=0; stage.dataset.view=''; ['Frames','Bursts','Compare'].forEach(n=>document.getElementById('v'+n).classList.toggle('on', n.toLowerCase()===v)); draw(); setPlaying(v!=='compare'?playing:false); }
+function setView(v){ view=v; idx=0; stage.dataset.view=''; ['Frames','Bursts','Diff','Compare'].forEach(n=>document.getElementById('v'+n).classList.toggle('on', n.toLowerCase()===v)); draw(); setPlaying(v!=='compare'?playing:false); }
 document.getElementById('vFrames').onclick=()=>setView('frames');
 document.getElementById('vBursts').onclick=()=>setView('bursts');
+document.getElementById('vDiff').onclick=()=>setView('diff');
 document.getElementById('vCompare').onclick=()=>setView('compare');
+if(!views.diff||!views.diff.length) document.getElementById('vDiff').style.display='none';
+document.getElementById('sm').onchange=e=>{smooth=e.target.checked; draw();};
 document.getElementById('play').onclick=()=>setPlaying(!playing);
 document.getElementById('prev').onclick=()=>step(-1);
 document.getElementById('next').onclick=()=>step(1);

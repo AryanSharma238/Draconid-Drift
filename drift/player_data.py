@@ -5,7 +5,7 @@ import numpy as np
 from astropy.time import Time
 
 from .clean import Cube, burst_groups
-from .render import flip_y, stretch_params, to_png_b64
+from .render import flip_y, robust_sigma, stretch_params, to_png_b64, to_png_diff_b64
 from .targets import mjd_to_year
 from .track import stack_image
 
@@ -49,6 +49,20 @@ def build_payload(cube: Cube, expected_xy, v_expected, v_tracked, zoom=None):
                            label=f"burst of {len(g)} frames · {d0} to {d1}",
                            marks=[mark(m)], mjd=m))
 
+    # --- view 2b: change since the first burst (static stars cancel; a mover leaves red + blue)
+    diff = []
+    if len(stacks) >= 2:
+        ref = stacks[0][1]
+        ds = [img - ref for _, img in stacks[1:]]
+        flat = np.concatenate([d[np.isfinite(d)].ravel() for d in ds])
+        lim = max(float(np.percentile(np.abs(flat), 99.5)), 4 * robust_sigma(flat)) if flat.size else 1.0
+        d0 = _date(cube.mjd[stacks[0][0]].min())
+        for (g, _), d in zip(stacks[1:], ds):
+            m = float(cube.mjd[g].mean())
+            diff.append(dict(imgs=[to_png_diff_b64(d, lim)], mjd=m, marks=[mark(m)],
+                             label=f"burst of {len(g)} frames ({_date(cube.mjd[g].min())}) minus the first burst ({d0}): "
+                                   "red = brighter now, blue = dimmer now"))
+
     # --- view 3: fixed stack vs tracked stack (all frames)
     fixed, _ = stack_image(cube.cube, cube.var, cube.mjd, (0, 0), tracked=False)
     tracked, _ = stack_image(cube.cube, cube.var, cube.mjd, v_tracked, tracked=True)
@@ -67,6 +81,6 @@ def build_payload(cube: Cube, expected_xy, v_expected, v_tracked, zoom=None):
             track = [a, b]
 
     return dict(nx=int(nx), ny=int(ny), zoom=int(zoom), track=track,
-                views=dict(frames=frames, bursts=bursts, compare=compare),
+                views=dict(frames=frames, bursts=bursts, diff=diff, compare=compare),
                 detector=cube.detector, source=cube.source,
                 t0=float(cube.mjd.min()), t1=float(cube.mjd.max()))

@@ -45,3 +45,19 @@ def to_png_b64(img, p):
 def flip_y(y, ny):
     """array row -> display row (north up)."""
     return ny - 1 - y
+
+
+def to_png_diff_b64(img, lim):
+    """Signed difference on white: red = brighter than the reference, blue = dimmer, white = no change.
+    Masked pixels grey. Same limit for every image of a view."""
+    a = np.flipud(np.asarray(img, float))
+    v = np.clip(np.nan_to_num(a, nan=0.0) / lim, -1, 1)
+    v = np.sign(v) * np.sqrt(np.abs(v))               # lift faint differences a little
+    rgb = np.full(a.shape + (3,), 255, np.uint8)
+    pos, neg = v > 0, v < 0
+    rgb[pos, 1] = rgb[pos, 2] = (255 * (1 - v[pos])).astype(np.uint8)
+    rgb[neg, 0] = rgb[neg, 1] = (255 * (1 + v[neg])).astype(np.uint8)
+    rgb[~np.isfinite(a)] = (190, 190, 190)
+    buf = io.BytesIO()
+    Image.fromarray(rgb, "RGB").save(buf, format="PNG", optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("ascii")

@@ -3,8 +3,11 @@ and get an honest verdict on whether something moved."""
 import json
 import os
 
+import warnings
+
 import numpy as np
 import streamlit as st
+from astropy.utils.exceptions import AstropyWarning
 import streamlit.components.v1 as components
 
 from drift import irsa, pipeline
@@ -12,6 +15,7 @@ from drift.targets import PRESETS, target_position
 from drift.demo import MID_EPOCH
 from drift.verdict_html import render as verdict_html
 
+warnings.simplefilter("ignore", AstropyWarning)     # the SIP-distortion notices flooded the logs
 HERE = os.path.dirname(__file__)
 
 
@@ -45,18 +49,14 @@ def qopt(name):
         return None
 
 
-if "init" not in st.session_state:
-    st.session_state.init = True
-    st.session_state.preset = "Custom coordinates"
-    st.session_state.ra = qopt("ra")                 # empty until a star button or the map fills them
-    st.session_state.dec = qopt("dec")
-    st.session_state.pmra = None
-    st.session_state.pmdec = None
-    st.session_state.epoch = None
-    st.session_state.fov = min(max(qfloat("fov", 180), 90.0), 600.0)
-    st.session_state.det = "SPHEREx-D2"
-    st.session_state.name = "Custom position"
-    st.session_state.key = "custom"
+# Every key gets a default if it is missing, so a browser tab left open from an older version
+# of the app (or a half-finished redeploy) can never crash on a missing key.
+_defaults = dict(preset="Custom coordinates", ra=qopt("ra"), dec=qopt("dec"), pmra=None, pmdec=None,
+                 epoch=None, fov=min(max(qfloat("fov", 180), 90.0), 600.0), det="SPHEREx-D2",
+                 name="Custom position", key="custom", snap_msg="")
+for _k, _v in _defaults.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 
 def set_preset(key):

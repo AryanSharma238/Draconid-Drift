@@ -11,7 +11,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from . import irsa
-from .clean import Cube, build_cube, select_same_colour
+from .clean import Cube, build_cube, flatten, select_same_colour
 from .demo import MID_EPOCH, synthetic_raw
 from .player_data import build_payload
 from .targets import Target, mjd_to_year, propagate
@@ -62,7 +62,7 @@ def save_cube(path, cube: Cube):
 
 def load_cube(path):
     z = np.load(path, allow_pickle=False)
-    wcs = WCS(fits.Header.fromstring(str(z["header"]), sep="\n"))
+    wcs = WCS(fits.Header.fromstring(str(z["header"]), sep=""))
     return Cube(z["cube"].astype(float), z["var"].astype(float), z["mjd"], z["wl"], wcs,
                 str(z["detector"]), "CACHE", int(z["n_found"]))
 
@@ -80,7 +80,7 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
     path = cache_path(spec)
     if use_cache and os.path.exists(path):
         return load_cube(path), info
-    planes = irsa.query_planes(ra, dec)
+    planes = irsa.query_planes(ra, dec, detector=spec.detector)
     info["planes"] = irsa.count_by_detector(planes)
     size_deg = spec.fov_arcsec * 1.6 / 3600.0          # extra room for detector rotation
     raw, n_found = irsa.fetch_detector(planes, spec.detector, ra, dec, size_deg, progress=progress)
@@ -96,6 +96,7 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
 def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
         progress=None, null_progress=None, seed=0):
     cube, info = load_frames(spec, demo=demo, progress=progress, seed=seed)
+    cube = flatten(cube)
     if same_colour:
         cube = select_same_colour(cube)
     wcs = cube.wcs

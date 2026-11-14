@@ -110,3 +110,28 @@ def burst_groups(mjd, gap_days=20.0):
         cur.append(b)
     groups.append(np.array(cur))
     return groups
+
+
+def flatten(cube, n_iter=4, clip=3.0):
+    """Remove each frame's slowly varying background (a tilted plane fitted with sigma clipping),
+    so the frames sit on the same flat level. Stars and movers are clipped out of the fit."""
+    ny, nx = cube.cube.shape[1:]
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    G = np.column_stack([np.ones(ny * nx), (xx.ravel() - nx / 2) / nx, (yy.ravel() - ny / 2) / ny])
+    out = cube.cube.copy()
+    for i in range(out.shape[0]):
+        f = out[i].ravel()
+        ok = np.isfinite(f)
+        if ok.sum() < 50:
+            continue
+        for _ in range(n_iter):
+            coef, *_ = np.linalg.lstsq(G[ok], f[ok], rcond=None)
+            res = f - G @ coef
+            sig = 1.4826 * np.nanmedian(np.abs(res[ok] - np.nanmedian(res[ok])))
+            if not np.isfinite(sig) or sig <= 0:
+                break
+            ok = np.isfinite(f) & (np.abs(res) < clip * sig)
+            if ok.sum() < 50:
+                break
+        out[i] = (f - G @ coef).reshape(ny, nx)
+    return type(cube)(out, cube.var, cube.mjd, cube.wl, cube.wcs, cube.detector, cube.source, cube.n_found)

@@ -41,9 +41,21 @@ Hover the number to see the five checks:
 
 The thresholds are heuristics, not calibrated cut-offs.
 
+## Results on real SPHEREx frames (cached in data/cache)
+
+| Target | Frames | Verdict | Strength ν | Notes |
+|---|---|---|---|---|
+| Barnard's Star | 61 | possible mover (confidence ≥ 0.997) | 45 | star is saturated, 43% flagged pixels, so the flag check fails |
+| Epsilon Indi B | 92 | inconclusive (0.93) | 57 | moves only about 1 pixel over the baseline |
+| WISE 0855 | 45 | possible mover (0.95) | 20 | detector D6 |
+| RW Aurigae | 50 | no motion detected | 42 | stationary variable star |
+| R Draconis | 85 | no motion detected | 44 | stationary variable star |
+
+Confidence is 1 − FAP from 300 scrambles, so 0.997 is the highest value that run can report.
+
 ## Honest limits
 
-- Never tested on real SPHEREx data. The sandbox it was built in could not reach IRSA. All tests use synthetic frames.
+- The unit tests use synthetic frames. Real-data results are the five cached targets above, with one run each.
 - The FAP covers a Gaussian-noise null with scrambles, and assumes constant flux over time.
 - WISE 0855 may be too faint in SPHEREx. Its listed coordinates are assumed to be epoch 2010.5.
 - Flag bit numbers should be checked against the file headers.

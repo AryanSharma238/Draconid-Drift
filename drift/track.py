@@ -53,7 +53,7 @@ class TrackSearch:
             ys, xs = y0 + M + sy, x0 + M + sx
             a = self.A[i, ys:ys + (y1 - y0), xs:xs + (x1 - x0)]
             b = self.B[i, ys:ys + (y1 - y0), xs:xs + (x1 - x0)]
-            sb = np.sqrt(b)
+            sb = np.sqrt(np.clip(b, 0, None))
             r = np.where(sb > 0, a / np.where(sb > 0, sb, 1.0), 0.0)
             As += np.clip(r, -CLIP_NU, CLIP_NU) * sb
             Bs += b

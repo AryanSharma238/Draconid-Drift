@@ -1,87 +1,801 @@
-<!DOCTYPE html><html><head><meta charset="utf-8">
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
 <style>
- body{margin:0;font-family:system-ui,sans-serif;background:#fff;color:#111}
- #bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
- button,select{font-size:14px;padding:5px 10px;border:1px solid #888;border-radius:6px;background:#f4f4f6;cursor:pointer}
- button.on{background:#222;color:#fff;border-color:#222}
- #label{font-weight:600;font-size:16px;margin:4px 0;min-height:22px}
- #stage{display:flex;gap:12px;align-items:flex-start}
- .pn{background:#fff}
- canvas{border:1px solid #bbb;image-rendering:pixelated;background:#fff;display:block}
- .cap{font-size:12px;color:#444;margin-top:3px;max-width:__CAPW__px}
- #tl{position:relative;height:26px;margin:6px 0;border-bottom:1px solid #bbb}
- .tk{position:absolute;bottom:0;width:2px;height:10px;background:#888}
- .tk.cur{background:#d33;height:20px;width:3px}
- #note{font-size:12px;color:#555;margin-top:4px}
- input[type=range]{width:260px}
-</style></head><body>
-<div id="bar">
- <button id="vFrames" class="on">All frames</button>
- <button id="vBursts">Burst stacks</button>
- <button id="vCompare">Fixed vs tracked stack</button>
- <span style="width:12px"></span>
- <button id="play">▶ Play</button><button id="prev">◀</button><button id="next">▶</button>
- <input id="scrub" type="range" min="0" max="0" value="0">
- <label>speed <select id="fps"><option value="1">1 fps</option><option value="2" selected>2 fps</option><option value="4">4 fps</option><option value="8">8 fps</option></select></label>
- <label><input id="mk" type="checkbox"> mark expected position</label>
+  :root {
+    --bg: #070a14;
+    --panel: #0d1326;
+    --panel-alt: #131b36;
+    --border: #233159;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-glow: rgba(56, 189, 248, 0.25);
+    --amber: #fbbf24;
+    --emerald: #34d399;
+    --rose: #fb7185;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 12px 14px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    user-select: none;
+  }
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(35, 49, 89, 0.7);
+  }
+  .btn-group {
+    display: inline-flex;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 3px;
+    gap: 3px;
+  }
+  button, select {
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 6px 11px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  button:hover, select:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+  }
+  button.on {
+    background: linear-gradient(135deg, #0284c7, #2563eb);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+  }
+  .ctrl-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 11px;
+    border-radius: 8px;
+  }
+  .ctrl-btn.play-active {
+    background: rgba(52, 211, 153, 0.15);
+    border-color: var(--emerald);
+    color: var(--emerald);
+  }
+  select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 9px;
+    border-radius: 7px;
+  }
+  .controls-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 10px 0 8px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border: 1px solid rgba(35, 49, 89, 0.65);
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .controls-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  input[type=range] {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  #scrub {
+    flex: 1;
+    min-width: 150px;
+    height: 6px;
+  }
+  .slider-sm {
+    width: 82px;
+    height: 5px;
+  }
+  .hud-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 10px;
+  }
+  #label {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--accent);
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    padding: 5px 11px;
+    border-radius: 7px;
+  }
+  #readout {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 5px 11px;
+    border-radius: 7px;
+    min-width: 245px;
+    text-align: right;
+  }
+  #stage {
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 10px;
+    background: radial-gradient(circle at center, #0f172a 0%, #050811 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    min-height: 280px;
+  }
+  .pn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .canvas-wrap {
+    position: relative;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+    background: #000;
+  }
+  canvas {
+    display: block;
+    cursor: crosshair;
+  }
+  .cap {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 7px;
+    max-width: __CAPW__px;
+    text-align: center;
+    font-weight: 500;
+  }
+  .tl-wrap {
+    margin: 12px 0 6px;
+    padding: 8px 12px 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .tl-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    font-family: ui-monospace, monospace;
+  }
+  #tl {
+    position: relative;
+    height: 22px;
+    border-bottom: 1px solid #334155;
+    cursor: pointer;
+  }
+  .tk {
+    position: absolute;
+    bottom: 0;
+    width: 2px;
+    height: 10px;
+    background: #475569;
+    border-radius: 1px;
+    transition: background 0.1s;
+  }
+  .tk.cur {
+    background: var(--amber);
+    height: 20px;
+    width: 3px;
+    box-shadow: 0 0 8px var(--amber);
+    z-index: 2;
+  }
+  #note {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="btn-group">
+    <button id="vFrames" class="on">All Frames</button>
+    <button id="vBursts">Pass Co-adds</button>
+    <button id="vLmdiff" title="Wavelength-matched residuals against other passes (cancels static stars)">λ-Matched Diff</button>
+    <button id="vCompare">Fixed vs Tracked</button>
+  </div>
+
+  <div style="display:flex;gap:6px;align-items:center;flex:1;max-width:460px;">
+    <button id="play" class="ctrl-btn">▶ Play</button>
+    <button id="prev" class="ctrl-btn" title="Previous frame (←)">◀</button>
+    <input id="scrub" type="range" min="0" max="0" value="0">
+    <button id="next" class="ctrl-btn" title="Next frame (→)">▶</button>
+    <select id="fps" title="Playback speed">
+      <option value="1">1 fps</option>
+      <option value="2" selected>2 fps</option>
+      <option value="4">4 fps</option>
+      <option value="8">8 fps</option>
+      <option value="12">12 fps</option>
+    </select>
+  </div>
 </div>
-<div id="label"></div>
+
+<div class="controls-row">
+  <label>Palette
+    <select id="cmap">
+      <option value="magma" selected>IR Thermal (Magma)</option>
+      <option value="cyan">Deep Space Cyan</option>
+      <option value="viridis">Viridis Scientific</option>
+      <option value="wiseview">WiseView Inverted</option>
+      <option value="classic">Classic Dark Sky</option>
+    </select>
+  </label>
+
+  <label>Pixel Mode
+    <select id="interp">
+      <option value="smooth" selected>Sub-pixel Smooth (PSF)</option>
+      <option value="crisp">Crisp Detector Pixels</option>
+      <option value="grid">Crisp + Detector Grid</option>
+    </select>
+  </label>
+
+  <label title="Power-law gamma / contrast adjustment">Contrast
+    <input id="gamma" class="slider-sm" type="range" min="0.4" max="2.2" step="0.05" value="0.85">
+  </label>
+
+  <label title="Background floor suppression">Sky Cut
+    <input id="bias" class="slider-sm" type="range" min="-0.15" max="0.35" step="0.02" value="0.02">
+  </label>
+
+  <button id="resetStretch" class="ctrl-btn" style="padding:3px 8px;font-size:11px;">Reset</button>
+
+  <span style="flex:1"></span>
+
+  <label><input id="mk" type="checkbox" checked> Target reticle &amp; path</label>
+  <label><input id="tmk" type="checkbox"> Best-fit track</label>
+  <label><input id="compass" type="checkbox" checked> N/E Compass</label>
+</div>
+
+<div class="hud-bar">
+  <div id="label"></div>
+  <div id="readout">Hover image to inspect pixel (x, y) &amp; intensity</div>
+</div>
+
 <div id="stage"></div>
-<div id="tl"></div>
-<div id="note"></div>
+
+<div class="tl-wrap">
+  <div class="tl-head">
+    <span>OBSERVING CADENCE TIMELINE (CLICK TO JUMP)</span>
+    <span id="tlSpan"></span>
+  </div>
+  <div id="tl"></div>
+</div>
+
+<div id="note">
+  <span id="noteLeft"></span>
+  <span>
+    <span class="legend-dot" style="background:#ef4444"></span>Expected Position
+    <span class="legend-dot" style="background:#38bdf8;margin-left:10px"></span>Detected Track
+    <span class="legend-dot" style="background:#475569;margin-left:10px"></span>Flagged Pixel
+  </span>
+</div>
+
 <script>
 const D = __DATA__;
 const views = D.views, Z = D.zoom, NX = D.nx, NY = D.ny;
-let view = 'frames', idx = 0, playing = false, timer = null, showMark = false;
+let view = 'frames', idx = 0, playing = false, timer = null;
+let showMark = true, showTrack = false, showCompass = true;
+let cmapName = 'magma', interpMode = 'smooth', gammaVal = 0.85, biasVal = 0.02;
+let hoverPos = null;
+
 const stage = document.getElementById('stage');
-// preload + decode every image once so playback never stalls (smoothness)
-const cache = {};
-let pending = 0;
-function pre(b64){ if(cache[b64]) return; const im = new Image(); pending++; im.onload = ()=>{pending--; if(!pending) draw();}; im.src = 'data:image/png;base64,'+b64; cache[b64] = im; }
-for (const k in views) views[k].forEach(it => it.imgs.forEach(pre));
-function draw(){
-  const items = views[view]; if(!items.length) return;
-  idx = Math.max(0, Math.min(idx, items.length-1));
+
+// Decode base64 raw [intensity_u8, mask_u8] arrays
+const rawCache = {};
+function decodeRaw(b64) {
+  if (rawCache[b64]) return rawCache[b64];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  rawCache[b64] = arr;
+  return arr;
+}
+for (const k in views) {
+  views[k].forEach(it => {
+    if (it.raws) it.raws.forEach(decodeRaw);
+  });
+}
+
+// Color LUTs (256 entries -> [R, G, B])
+function lerpStops(stops, t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i], b = stops[i + 1];
+    if (t >= a[0] && t <= b[0]) {
+      const u = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+      return [
+        Math.round(a[1] + u * (b[1] - a[1])),
+        Math.round(a[2] + u * (b[2] - a[2])),
+        Math.round(a[3] + u * (b[3] - a[3]))
+      ];
+    }
+  }
+  const last = stops[stops.length - 1];
+  return [last[1], last[2], last[3]];
+}
+
+const PALETTES = {
+  magma: [
+    [0.00, 6, 8, 20],
+    [0.18, 32, 17, 75],
+    [0.42, 108, 28, 115],
+    [0.68, 196, 60, 78],
+    [0.88, 248, 148, 42],
+    [1.00, 254, 250, 210]
+  ],
+  cyan: [
+    [0.00, 5, 9, 20],
+    [0.22, 12, 34, 72],
+    [0.50, 18, 95, 152],
+    [0.78, 56, 189, 248],
+    [0.93, 186, 238, 255],
+    [1.00, 255, 255, 255]
+  ],
+  viridis: [
+    [0.00, 18, 8, 42],
+    [0.25, 59, 82, 139],
+    [0.50, 33, 145, 140],
+    [0.75, 94, 201, 98],
+    [1.00, 253, 231, 37]
+  ],
+  wiseview: [
+    [0.00, 248, 250, 252],
+    [0.50, 130, 140, 158],
+    [0.85, 35, 42, 58],
+    [1.00, 5, 8, 16]
+  ],
+  classic: [
+    [0.00, 7, 10, 18],
+    [0.50, 115, 125, 145],
+    [0.88, 225, 232, 245],
+    [1.00, 255, 255, 255]
+  ]
+};
+
+let lutR = new Uint8Array(256), lutG = new Uint8Array(256), lutB = new Uint8Array(256);
+let diffR = new Uint8Array(256), diffG = new Uint8Array(256), diffB = new Uint8Array(256);
+for (let i = 0; i < 256; i++) {
+  const v = (i - 127.5) / 127.5; // -1..+1
+  if (v < 0) {
+    const u = Math.min(1, Math.pow(-v, 0.85));
+    diffR[i] = Math.round(6 * (1 - u));
+    diffG[i] = Math.round(135 * u + 8 * (1 - u));
+    diffB[i] = Math.round(255 * u + 18 * (1 - u));
+  } else {
+    const u = Math.min(1, Math.pow(v, 0.85));
+    diffR[i] = Math.round(255 * u + 6 * (1 - u));
+    diffG[i] = Math.round(145 * u + 8 * (1 - u));
+    diffB[i] = Math.round(20 * u + 18 * (1 - u));
+  }
+}
+
+function buildLUT() {
+  const stops = PALETTES[cmapName] || PALETTES.magma;
+  for (let i = 0; i < 256; i++) {
+    let x = i / 255.0;
+    x = Math.max(0, Math.min(1, (x - biasVal) / Math.max(0.05, 1 - biasVal)));
+    x = Math.pow(x, gammaVal);
+    const [r, g, b] = lerpStops(stops, x);
+    lutR[i] = r; lutG[i] = g; lutB[i] = b;
+  }
+}
+buildLUT();
+
+// Bilinear sampling of raw intensity (0..255) for smooth sub-pixel rendering
+function renderPanelToCanvas(c, rawBytes, mark, tmark, captionText, isDiff) {
+  const W = NX * Z, H = NY * Z;
+  const ctx = c.getContext('2d');
+  const imgData = ctx.createImageData(W, H);
+  const dst = imgData.data;
+  const isLight = (!isDiff && cmapName === 'wiseview');
+  const badColor = isLight ? [206, 214, 235] : [26, 36, 58];
+  const rLUT = isDiff ? diffR : lutR;
+  const gLUT = isDiff ? diffG : lutG;
+  const bLUT = isDiff ? diffB : lutB;
+
+  if (interpMode === 'smooth') {
+    for (let py = 0; py < H; py++) {
+      const fy = (py + 0.5) / Z - 0.5;
+      const y0 = Math.max(0, Math.min(NY - 1, Math.floor(fy)));
+      const y1 = Math.max(0, Math.min(NY - 1, y0 + 1));
+      const wy = fy - Math.floor(fy);
+      for (let px = 0; px < W; px++) {
+        const fx = (px + 0.5) / Z - 0.5;
+        const x0 = Math.max(0, Math.min(NX - 1, Math.floor(fx)));
+        const x1 = Math.max(0, Math.min(NX - 1, x0 + 1));
+        const wx = fx - Math.floor(fx);
+
+        const i00 = (y0 * NX + x0) * 2, i01 = (y0 * NX + x1) * 2;
+        const i10 = (y1 * NX + x0) * 2, i11 = (y1 * NX + x1) * 2;
+
+        const m00 = rawBytes[i00 + 1], m01 = rawBytes[i01 + 1];
+        const m10 = rawBytes[i10 + 1], m11 = rawBytes[i11 + 1];
+
+        const nearIdx = (Math.min(NY - 1, Math.max(0, Math.floor(py / Z))) * NX +
+                         Math.min(NX - 1, Math.max(0, Math.floor(px / Z)))) * 2;
+        const outIdx = (py * W + px) * 4;
+
+        if (rawBytes[nearIdx + 1] === 1) {
+          // subtle checkerboard on flagged detector pixels
+          const chk = ((px >> 2) + (py >> 2)) & 1 ? 6 : -6;
+          dst[outIdx] = badColor[0] + chk;
+          dst[outIdx + 1] = badColor[1] + chk;
+          dst[outIdx + 2] = badColor[2] + chk;
+          dst[outIdx + 3] = 255;
+        } else {
+          const v00 = m00 === 1 ? rawBytes[nearIdx] : rawBytes[i00];
+          const v01 = m01 === 1 ? rawBytes[nearIdx] : rawBytes[i01];
+          const v10 = m10 === 1 ? rawBytes[nearIdx] : rawBytes[i10];
+          const v11 = m11 === 1 ? rawBytes[nearIdx] : rawBytes[i11];
+          const val = Math.round((1 - wy) * ((1 - wx) * v00 + wx * v01) +
+                                 wy * ((1 - wx) * v10 + wx * v11));
+          const vClamp = Math.max(0, Math.min(255, val));
+          dst[outIdx] = rLUT[vClamp];
+          dst[outIdx + 1] = gLUT[vClamp];
+          dst[outIdx + 2] = bLUT[vClamp];
+          dst[outIdx + 3] = 255;
+        }
+      }
+    }
+  } else {
+    const showGrid = (interpMode === 'grid');
+    for (let py = 0; py < H; py++) {
+      const y = Math.min(NY - 1, Math.floor(py / Z));
+      const isEdgeY = showGrid && (py % Z === 0);
+      for (let px = 0; px < W; px++) {
+        const x = Math.min(NX - 1, Math.floor(px / Z));
+        const isEdge = isEdgeY || (showGrid && (px % Z === 0));
+        const rIdx = (y * NX + x) * 2;
+        const val = rawBytes[rIdx], mask = rawBytes[rIdx + 1];
+        const outIdx = (py * W + px) * 4;
+        if (mask === 1) {
+          const chk = ((px >> 2) + (py >> 2)) & 1 ? 6 : -6;
+          dst[outIdx] = badColor[0] + chk;
+          dst[outIdx + 1] = badColor[1] + chk;
+          dst[outIdx + 2] = badColor[2] + chk;
+          dst[outIdx + 3] = 255;
+        } else {
+          let r = rLUT[val], g = gLUT[val], b = bLUT[val];
+          if (isEdge) {
+            r = Math.round(r * 0.8 + 30 * 0.2);
+            g = Math.round(g * 0.8 + 45 * 0.2);
+            b = Math.round(b * 0.8 + 75 * 0.2);
+          }
+          dst[outIdx] = r; dst[outIdx + 1] = g; dst[outIdx + 2] = b; dst[outIdx + 3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // Draw Expected Motion Trajectory Vector
+  if (showMark && D.traj_exp) {
+    const [p0, p1] = D.traj_exp;
+    const x0 = (p0[0] + 0.5) * Z, y0 = (p0[1] + 0.5) * Z;
+    const x1 = (p1[0] + 0.5) * Z, y1 = (p1[1] + 0.5) * Z;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 113, 133, 0.55)';
+    ctx.lineWidth = 1.75;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw Best-Fit Track Trajectory
+  if (showTrack && D.traj_best) {
+    const [p0, p1] = D.traj_best;
+    const x0 = (p0[0] + 0.5) * Z, y0 = (p0[1] + 0.5) * Z;
+    const x1 = (p1[0] + 0.5) * Z, y1 = (p1[1] + 0.5) * Z;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+    ctx.lineWidth = 1.75;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw Expected Position Reticle (gapped crosshair + ring)
+  if (showMark && mark) {
+    const cx = (mark[0] + 0.5) * Z, cy = (mark[1] + 0.5) * Z;
+    const rIn = Math.max(1.8 * Z, 9), rOut = rIn + 7;
+    ctx.save();
+    ctx.strokeStyle = '#fb7185';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rIn, 0, Math.PI * 2);
+    ctx.moveTo(cx - rOut, cy); ctx.lineTo(cx - rIn - 2, cy);
+    ctx.moveTo(cx + rIn + 2, cy); ctx.lineTo(cx + rOut, cy);
+    ctx.moveTo(cx, cy - rOut); ctx.lineTo(cx, cy - rIn - 2);
+    ctx.moveTo(cx, cy + rIn + 2); ctx.lineTo(cx, cy + rOut);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Draw Best-Fit Track Marker
+  if (showTrack && tmark) {
+    const cx = (tmark[0] + 0.5) * Z, cy = (tmark[1] + 0.5) * Z;
+    const r = Math.max(1.6 * Z, 8);
+    ctx.save();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 4;
+    ctx.strokeRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.restore();
+  }
+
+  // Draw North-Up / East-Left Compass & Scale Bar
+  if (showCompass) {
+    ctx.save();
+    ctx.strokeStyle = isLight ? 'rgba(15, 23, 42, 0.75)' : 'rgba(226, 232, 240, 0.8)';
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = 1.6;
+    ctx.font = 'bold 10px ui-monospace, monospace';
+    const ox = W - 18, oy = H - 18, len = 22;
+    ctx.beginPath();
+    ctx.moveTo(ox, oy); ctx.lineTo(ox, oy - len);
+    ctx.moveTo(ox, oy); ctx.lineTo(ox - len, oy);
+    ctx.stroke();
+    ctx.fillText('N', ox - 3, oy - len - 4);
+    ctx.fillText('E', ox - len - 10, oy + 4);
+
+    // 30 arcsec scale bar (~4.88 SPHEREx pixels)
+    const barPx = (30.0 / 6.15) * Z;
+    const bx = 12, by = H - 14;
+    ctx.beginPath();
+    ctx.moveTo(bx, by); ctx.lineTo(bx + barPx, by);
+    ctx.moveTo(bx, by - 3); ctx.lineTo(bx, by + 3);
+    ctx.moveTo(bx + barPx, by - 3); ctx.lineTo(bx + barPx, by + 3);
+    ctx.stroke();
+    ctx.fillText('30"', bx + barPx / 2 - 9, by - 5);
+    ctx.restore();
+  }
+
+  // Hover pixel highlight
+  if (hoverPos) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(hoverPos.x * Z, hoverPos.y * Z, Z, Z);
+    ctx.restore();
+  }
+}
+
+function draw() {
+  const items = views[view];
+  if (!items || !items.length) return;
+  idx = Math.max(0, Math.min(idx, items.length - 1));
   const it = items[idx];
   document.getElementById('label').textContent = it.label;
-  if (stage.dataset.view !== view){
-    stage.innerHTML = ''; stage.dataset.view = view;
-    it.imgs.forEach((_,j)=>{
-      const w = document.createElement('div'); w.className='pn';
-      const c = document.createElement('canvas'); c.width=NX*Z; c.height=NY*Z; c.id='c'+j; w.appendChild(c);
-      const cap = document.createElement('div'); cap.className='cap'; cap.id='cap'+j; w.appendChild(cap);
+
+  if (stage.dataset.view !== view) {
+    stage.innerHTML = '';
+    stage.dataset.view = view;
+    it.raws.forEach((_, j) => {
+      const w = document.createElement('div'); w.className = 'pn';
+      const cw = document.createElement('div'); cw.className = 'canvas-wrap';
+      const c = document.createElement('canvas');
+      c.width = NX * Z; c.height = NY * Z; c.id = 'c' + j;
+      c.addEventListener('mousemove', e => {
+        const rect = c.getBoundingClientRect();
+        const px = Math.floor((e.clientX - rect.left) / Z);
+        const py = Math.floor((e.clientY - rect.top) / Z);
+        if (px >= 0 && px < NX && py >= 0 && py < NY) {
+          hoverPos = {x: px, y: py};
+          const curItem = views[view][idx];
+          const rb = decodeRaw(curItem.raws[j]);
+          const rIdx = (py * NX + px) * 2;
+          const val = rb[rIdx], mask = rb[rIdx + 1];
+          const fitsY = NY - 1 - py;
+          const status = mask === 1 ? 'FLAGGED' : (mask === 2 ? 'SAT-CORE' : `${Math.round(val / 2.55)}% stretch`);
+          document.getElementById('readout').textContent =
+            `Pixel (${px}, ${fitsY}) · ${status}`;
+          drawCanvasesOnly();
+        }
+      });
+      c.addEventListener('mouseleave', () => {
+        hoverPos = null;
+        document.getElementById('readout').textContent = 'Hover image to inspect pixel (x, y) & intensity';
+        drawCanvasesOnly();
+      });
+      cw.appendChild(c);
+      w.appendChild(cw);
+      const cap = document.createElement('div'); cap.className = 'cap'; cap.id = 'cap' + j;
+      w.appendChild(cap);
       stage.appendChild(w);
     });
   }
-  it.imgs.forEach((b64,j)=>{
-    const c = document.getElementById('c'+j), g = c.getContext('2d');
-    g.imageSmoothingEnabled = false; g.clearRect(0,0,c.width,c.height);
-    g.drawImage(cache[b64], 0, 0, c.width, c.height);
-    const m = it.marks && it.marks[j];
-    if (showMark && m){ g.strokeStyle='#e11'; g.lineWidth=2; g.beginPath(); g.arc((m[0]+0.5)*Z,(m[1]+0.5)*Z,Math.max(2.2*Z,10),0,6.283); g.stroke(); }
-    document.getElementById('cap'+j).textContent = it.captions ? it.captions[j] : '';
+
+  drawCanvasesOnly();
+
+  const scrub = document.getElementById('scrub');
+  scrub.max = items.length - 1;
+  scrub.value = idx;
+
+  // Epoch timeline strip
+  const tl = document.getElementById('tl');
+  tl.innerHTML = '';
+  const span = Math.max(D.t1 - D.t0, 1), W = tl.clientWidth || 600;
+  document.getElementById('tlSpan').textContent = `${span.toFixed(0)} day baseline · ${items.length} steps`;
+  items.forEach((x, i) => {
+    const t = document.createElement('div');
+    t.className = 'tk' + (i === idx ? ' cur' : '');
+    t.style.left = ((x.mjd - D.t0) / span * (W - 6)) + 'px';
+    t.title = x.label;
+    t.onclick = e => { e.stopPropagation(); idx = i; draw(); };
+    tl.appendChild(t);
   });
-  document.getElementById('scrub').max = items.length-1; document.getElementById('scrub').value = idx;
-  // epoch tick strip: shows the real, clustered observing cadence
-  const tl = document.getElementById('tl'); tl.innerHTML='';
-  const span = Math.max(D.t1-D.t0, 1), W = tl.clientWidth || 600;
-  items.forEach((x,i)=>{ const t=document.createElement('div'); t.className='tk'+(i===idx?' cur':''); t.style.left=((x.mjd-D.t0)/span*(W-6))+'px'; tl.appendChild(t); });
 }
-function step(d){ const n=views[view].length; idx=(idx+d+n)%n; draw(); }
-function setPlaying(p){ playing=p; document.getElementById('play').textContent = p?'❚❚ Pause':'▶ Play';
-  clearInterval(timer); if(p) timer=setInterval(()=>step(1), 1000/parseFloat(document.getElementById('fps').value)); }
-function setView(v){ view=v; idx=0; stage.dataset.view=''; ['Frames','Bursts','Compare'].forEach(n=>document.getElementById('v'+n).classList.toggle('on', n.toLowerCase()===v)); draw(); setPlaying(v!=='compare'?playing:false); }
-document.getElementById('vFrames').onclick=()=>setView('frames');
-document.getElementById('vBursts').onclick=()=>setView('bursts');
-document.getElementById('vCompare').onclick=()=>setView('compare');
-document.getElementById('play').onclick=()=>setPlaying(!playing);
-document.getElementById('prev').onclick=()=>step(-1);
-document.getElementById('next').onclick=()=>step(1);
-document.getElementById('scrub').oninput=e=>{idx=parseInt(e.target.value); draw();};
-document.getElementById('fps').onchange=()=>{ if(playing) setPlaying(true); };
-document.getElementById('mk').onchange=e=>{showMark=e.target.checked; draw();};
-document.addEventListener('keydown',e=>{ if(e.key===' '){e.preventDefault();setPlaying(!playing);} if(e.key==='ArrowRight')step(1); if(e.key==='ArrowLeft')step(-1); });
-document.getElementById('note').textContent = (D.source==='SYNTHETIC'?'SYNTHETIC DEMO DATA (not real SPHEREx images). ':'') +
-  'One fixed brightness scale for every frame; stars dark on white; north up, east left. Detector '+D.detector+'. Frames come in bursts separated by months, so the strip above is uneven by design.';
-if(!pending) draw();
-</script></body></html>
+
+function drawCanvasesOnly() {
+  const items = views[view];
+  if (!items || !items.length) return;
+  const it = items[idx];
+  it.raws.forEach((b64, j) => {
+    const c = document.getElementById('c' + j);
+    if (!c) return;
+    const rawBytes = decodeRaw(b64);
+    const m = it.marks && it.marks[j];
+    const tm = it.tmarks && it.tmarks[j];
+    const cap = it.captions ? it.captions[j] : '';
+    renderPanelToCanvas(c, rawBytes, m, tm, cap, !!it.is_diff);
+    document.getElementById('cap' + j).textContent = cap;
+  });
+}
+
+function step(d) {
+  const n = views[view].length;
+  idx = (idx + d + n) % n;
+  draw();
+}
+
+function setPlaying(p) {
+  playing = p;
+  const btn = document.getElementById('play');
+  btn.textContent = p ? '❚❚ Pause' : '▶ Play';
+  btn.classList.toggle('play-active', p);
+  clearInterval(timer);
+  if (p) {
+    timer = setInterval(() => step(1), 1000 / parseFloat(document.getElementById('fps').value));
+  }
+}
+
+function setView(v) {
+  view = v; idx = 0; stage.dataset.view = '';
+  ['Frames', 'Bursts', 'Lmdiff', 'Compare'].forEach(n =>
+    document.getElementById('v' + n).classList.toggle('on', n.toLowerCase() === v)
+  );
+  draw();
+  setPlaying(v !== 'compare' ? playing : false);
+}
+
+document.getElementById('vFrames').onclick = () => setView('frames');
+document.getElementById('vBursts').onclick = () => setView('bursts');
+document.getElementById('vLmdiff').onclick = () => setView('lmdiff');
+document.getElementById('vCompare').onclick = () => setView('compare');
+document.getElementById('play').onclick = () => setPlaying(!playing);
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+document.getElementById('scrub').oninput = e => { idx = parseInt(e.target.value); draw(); };
+document.getElementById('fps').onchange = () => { if (playing) setPlaying(true); };
+document.getElementById('mk').onchange = e => { showMark = e.target.checked; drawCanvasesOnly(); };
+document.getElementById('tmk').onchange = e => { showTrack = e.target.checked; drawCanvasesOnly(); };
+document.getElementById('compass').onchange = e => { showCompass = e.target.checked; drawCanvasesOnly(); };
+
+document.getElementById('cmap').onchange = e => {
+  cmapName = e.target.value;
+  buildLUT();
+  drawCanvasesOnly();
+};
+document.getElementById('interp').onchange = e => {
+  interpMode = e.target.value;
+  drawCanvasesOnly();
+};
+document.getElementById('gamma').oninput = e => {
+  gammaVal = parseFloat(e.target.value);
+  buildLUT();
+  drawCanvasesOnly();
+};
+document.getElementById('bias').oninput = e => {
+  biasVal = parseFloat(e.target.value);
+  buildLUT();
+  drawCanvasesOnly();
+};
+document.getElementById('resetStretch').onclick = () => {
+  gammaVal = 0.85; biasVal = 0.02;
+  document.getElementById('gamma').value = '0.85';
+  document.getElementById('bias').value = '0.02';
+  buildLUT();
+  drawCanvasesOnly();
+};
+
+document.getElementById('tl').onclick = e => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const targetMjd = D.t0 + frac * (D.t1 - D.t0);
+  const items = views[view];
+  let bestIdx = 0, bestDist = Infinity;
+  items.forEach((it, i) => {
+    const d = Math.abs(it.mjd - targetMjd);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  });
+  idx = bestIdx;
+  draw();
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+  if (e.key === 'ArrowRight') step(1);
+  if (e.key === 'ArrowLeft') step(-1);
+});
+
+document.getElementById('noteLeft').textContent =
+  (D.source === 'SYNTHETIC' ? '⚠ SYNTHETIC DEMO DATA · ' : '') +
+  `Detector ${D.detector} · 6.15"/px · Fixed asinh stretch across frames · Saturated cores reconstructed.`;
+
+draw();
+</script>
+</body>
+</html>

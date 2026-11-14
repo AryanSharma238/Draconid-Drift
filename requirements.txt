@@ -2,8 +2,14 @@ streamlit>=1.35
 numpy
 scipy
 astropy
+astropy-healpix
 reproject
-requests
 pillow
-pyvo
-astroquery
+pandas
+fastapi
+uvicorn
+orjson
+httpx[http2]
+requests
+pytest
+pytest-asyncio

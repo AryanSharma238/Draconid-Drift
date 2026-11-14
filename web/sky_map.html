@@ -15,9 +15,10 @@
 <div class="panel" id="top">
  <input id="q" placeholder="Object name, or RA Dec in degrees" size="34"><button id="goBtn">Go</button>
  <select id="survey">
-  <option value="P/DSS2/color">Optical (DSS2)</option><option value="P/2MASS/color">Near-IR (2MASS)</option>
-  <option value="P/allWISE/color">Mid-IR (AllWISE)</option>
-  <option value="https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube">SPHEREx all-sky (IRSA, experimental)</option>
+  <option value="https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube" selected>SPHEREx All-Sky (IRSA HiPS)</option>
+  <option value="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1">Mid-IR (AllWISE W4/W2/W1)</option>
+  <option value="https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color">Near-IR (2MASS J/H/K)</option>
+  <option value="https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color">Optical (DSS2)</option>
  </select>
  <select id="proj"><option value="AIT">Aitoff (all-sky)</option><option value="MOL">Mollweide</option><option value="SIN">Orthographic</option><option value="TAN">Flat</option></select>
  <button id="gridBtn">Grid</button>
@@ -40,7 +41,7 @@ function select(ra, dec){
 function jump(ra, dec, fovArcsec){ aladin.gotoRaDec(ra, dec); aladin.setFoV((fovArcsec||600)/3600); select(ra, dec); }
 function parse(s){ const m = s.trim().match(/^(-?\d+(?:\.\d+)?)[ ,]+(-?\d+(?:\.\d+)?)$/); return m ? {ra:+m[1], dec:+m[2]} : null; }
 A.init.then(() => {
-  aladin = A.aladin('#aladin-lite-div', {survey:'P/DSS2/color', fov:360, target:'0 +0', projection:'AIT',
+  aladin = A.aladin('#aladin-lite-div', {survey:'https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube', fov:360, target:'0 +0', projection:'AIT',
                                           cooFrame:'ICRSd', showCooGrid:true, showFullscreenControl:false});
   cat = A.catalog({name:'selected', shape:'cross', color:'#22d3ee', sourceSize:22}); aladin.addCatalog(cat);
   const pre = A.catalog({name:'presets', shape:'circle', color:'#fbbf24', sourceSize:12, onClick:'showPopup'});
@@ -49,7 +50,7 @@ A.init.then(() => {
   aladin.on('click', e => { if (e && !e.isDragging && e.ra !== undefined) select(e.ra, e.dec); });
   const chips = document.getElementById('chips');
   INIT.presets.forEach(p => { const b = document.createElement('button'); b.textContent = p.name;
-    b.onclick = () => jump(p.ra, p.dec, 600); chips.appendChild(b); });
+    b.onclick = () => { jump(p.ra, p.dec, 600); sel.presetKey = p.key; }; chips.appendChild(b); });
   document.getElementById('goBtn').onclick = () => { const v = document.getElementById('q').value, c = parse(v);
     if (c) jump(c.ra, c.dec, 600); else aladin.gotoObject(v, {success: p => select(p[0], p[1]), error: () => alert('Name not found')}); };
   document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('goBtn').click(); });
@@ -58,9 +59,19 @@ A.init.then(() => {
   let g = true; document.getElementById('gridBtn').onclick = () => { g = !g; aladin.showCooGrid(g); };
   document.getElementById('launch').onclick = () => {
     if (!sel) { alert('Click the sky first'); return; }
-    const q = new URLSearchParams({ra: sel.ra.toFixed(6), dec: sel.dec.toFixed(6), fov: INIT.fov});
-    try { window.parent.location.search = '?' + q.toString(); }
-    catch (err) { prompt('Copy these into the RA / Dec boxes below:', sel.ra.toFixed(6) + ' ' + sel.dec.toFixed(6)); }
+    const params = {ra: sel.ra.toFixed(6), dec: sel.dec.toFixed(6), fov: INIT.fov};
+    if (sel.presetKey) params.preset = sel.presetKey;
+    const q = new URLSearchParams(params);
+    try {
+      if (window.top && window.top.location) {
+        window.top.location.search = '?' + q.toString();
+        return;
+      }
+      window.parent.location.search = '?' + q.toString();
+    } catch (err) {
+      navigator.clipboard && navigator.clipboard.writeText(sel.ra.toFixed(6) + ' ' + sel.dec.toFixed(6));
+      document.getElementById('coords').textContent = 'Selected: RA ' + sel.ra.toFixed(6) + '  Dec ' + sel.dec.toFixed(6) + ' (copied to clipboard — paste below)';
+    }
   };
   if (INIT.ra !== null) jump(INIT.ra, INIT.dec, 900);
 }).catch(err => { document.getElementById('coords').textContent = 'Map failed to start: ' + err + '. Use the RA/Dec boxes below.'; });

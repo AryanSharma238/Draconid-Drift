@@ -1,37 +1,171 @@
-<!DOCTYPE html><html><head><meta charset="utf-8">
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
 <style>
- body{margin:0;font-family:system-ui,sans-serif;color:#111}
- .card{display:flex;gap:22px;align-items:center;padding:14px 18px;border:1px solid #cfd4e0;border-radius:12px;background:#fafbff}
- .big{position:relative;cursor:help;text-align:center;min-width:170px}
- .num{font-size:46px;font-weight:800;line-height:1;color:__COLOR__}
- .lab{font-size:12px;color:#444;margin-top:4px}
- .hint{font-size:11px;color:#777;margin-top:2px}
- .tip{display:none;position:absolute;left:0;top:100%;z-index:10;width:340px;background:#10162b;color:#eef;padding:12px 14px;border-radius:10px;font-size:13px;text-align:left;box-shadow:0 8px 24px rgba(0,0,0,.35)}
- .big:hover .tip,.big:focus .tip{display:block}
- .tip table{border-collapse:collapse;width:100%} .tip td{padding:3px 0;vertical-align:top}
- .tip td.v{text-align:right;font-family:ui-monospace,monospace;white-space:nowrap;padding-left:10px}
- .ok{color:#6ee7a0}.no{color:#ff8b8b}.in{color:#aab}
- .sm{font-size:11px;color:#aab;margin-top:6px;line-height:1.35}
- .txt{font-size:16px;line-height:1.35;max-width:520px}
- .sub{font-size:12px;color:#555;margin-top:6px}
-</style></head><body>
-<div class="card">
- <div class="big" tabindex="0">
-  <div class="num">__CONF__</div>
-  <div class="lab">confidence this is not noise</div>
-  <div class="hint">hover for the 5 checks</div>
-  <div class="tip">
-   <b>The five checks behind this number</b>
-   <table>
-    <tr><td>1. Strength (best-track S/N)</td><td class="v in">__NU__</td></tr>
-    <tr><td>2. Moving beats still (Δχ²)</td><td class="v __MCLS__">__DCHI__</td></tr>
-    <tr><td>3. Both halves agree (S/N each)</td><td class="v __HCLS__">__HALVES__</td></tr>
-    <tr><td>4. Survives dropping any frame</td><td class="v __LCLS__">__LOO__</td></tr>
-    <tr><td>5. Unflagged data on the track</td><td class="v __FCLS__">__FLAGS__</td></tr>
-   </table>
-   <div class="sm">Headline = 1 − false-alarm probability. __NULLTXT__ It is not the probability the object is real; checks 2–5 address stars, artifacts and single bad frames.</div>
+  :root {
+    --bg: #070a14;
+    --panel: #0d1326;
+    --border: #233159;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: transparent;
+    color: var(--text);
+  }
+  .verdict-wrap {
+    background: linear-gradient(145deg, #0b1021 0%, #070a14 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .top-row {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .score-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 175px;
+    padding: 12px 18px;
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 12px;
+  }
+  .num {
+    font-size: 44px;
+    font-weight: 800;
+    line-height: 1;
+    color: __COLOR__;
+    letter-spacing: -0.02em;
+  }
+  .lab {
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .fap-tag {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 3px;
+    font-family: ui-monospace, monospace;
+  }
+  .headline-col {
+    flex: 1;
+    min-width: 260px;
+  }
+  .txt {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: #f8fafc;
+  }
+  .sub {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 5px;
+  }
+  .null-note {
+    font-size: 11.5px;
+    color: #64748b;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .checks-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(130px, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 760px) {
+    .checks-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .chk-card {
+    background: var(--panel);
+    border: 1px solid rgba(35, 49, 89, 0.75);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .chk-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .chk-val {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 16px;
+    font-weight: 700;
+    margin: 5px 0 3px;
+  }
+  .chk-desc {
+    font-size: 10.5px;
+    color: #64748b;
+  }
+  .ok { color: #34d399; }
+  .no { color: #fb7185; }
+  .in { color: #38bdf8; }
+</style>
+</head>
+<body>
+<div class="verdict-wrap">
+  <div class="top-row">
+    <div class="score-box">
+      <div class="num">__CONF__</div>
+      <div class="lab">Motion Confidence</div>
+      <div class="fap-tag">1 − FAP (__N_NULL__ scrambles)</div>
+    </div>
+    <div class="headline-col">
+      <div class="txt">__HEADLINE__</div>
+      <div class="sub">__SUB__</div>
+      <div class="null-note">__NULLTXT__</div>
+    </div>
   </div>
- </div>
- <div><div class="txt">__HEADLINE__</div>
- <div class="sub">__SUB__</div></div>
-</div></body></html>
+
+  <div class="checks-grid">
+    <div class="chk-card">
+      <div class="chk-title">1. Track S/N (ν)</div>
+      <div class="chk-val in">__NU__</div>
+      <div class="chk-desc">Matched-filter strength</div>
+    </div>
+    <div class="chk-card">
+      <div class="chk-title">2. Moving vs Still (Δχ²)</div>
+      <div class="chk-val __MCLS__">__DCHI__</div>
+      <div class="chk-desc">Must exceed static star (> 0)</div>
+    </div>
+    <div class="chk-card">
+      <div class="chk-title">3. Split-Half S/N</div>
+      <div class="chk-val __HCLS__">__HALVES__</div>
+      <div class="chk-desc">Even/odd frames ≥ 0.5 ν</div>
+    </div>
+    <div class="chk-card">
+      <div class="chk-title">4. Leave-One-Out</div>
+      <div class="chk-val __LCLS__">__LOO__</div>
+      <div class="chk-desc">Drop any frame ≥ 0.8 ν</div>
+    </div>
+    <div class="chk-card">
+      <div class="chk-title">5. Flagged Pixels</div>
+      <div class="chk-val __FCLS__">__FLAGS__</div>
+      <div class="chk-desc">Unusable pixels ≤ 25%</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,23 +1,50 @@
-"""End-to-end: coordinates -> frames -> clean cube -> verdict -> player payload."""
+"""End-to-end pipeline: coordinates -> EC2/S3 frames -> clean cube -> verdict -> player payload.
+
+Data fetching uses:
+1. Local `.npz` cube cache (instant <5 ms warm hit)
+2. EC2 backend tunnel (`http://127.0.0.1:8000/api/cube` in `us-east-1` with S3 VPC Endpoint)
+3. Direct local `backend.sequence.load_frames` (local S3 footprint index + parallel HTTP/2 S3 box range reads)
+"""
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import json
+import io
 import os
+import time
 from dataclasses import dataclass
 
+import httpx
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from . import irsa
-from .clean import Cube, build_cube, flatten, select_same_colour
+from backend import config
+from backend.models import make_grid as backend_make_grid
+from backend.sequence import load_frames as backend_load_frames
+
+from .clean import Cube, flatten, frames_to_cube, select_same_colour
 from .demo import MID_EPOCH, synthetic_raw
 from .player_data import build_payload
 from .targets import Target, mjd_to_year, propagate
 from .verdict import assess
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "cache")
+EC2_BACKEND_URL = os.environ.get("SPHEREX_BACKEND_URL", "http://127.0.0.1:8000")
+
+DETECTORS = [f"SPHEREx-D{d}" for d in config.DETECTORS]
+DETECTOR_RANGE = {
+    "SPHEREx-D1": "0.75–1.11",
+    "SPHEREx-D2": "1.11–1.63",
+    "SPHEREx-D3": "1.63–2.42",
+    "SPHEREx-D4": "2.42–3.82",
+    "SPHEREx-D5": "3.82–4.42",
+    "SPHEREx-D6": "4.42–5.00",
+}
+
+
+class DataFetchError(RuntimeError):
+    """Raised when neither EC2 backend nor S3 footprint index can return frames."""
 
 
 @dataclass
@@ -46,6 +73,13 @@ def field_center(spec: Spec):
     return propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
 
 
+def _det_int(detector: str) -> int:
+    if isinstance(detector, int):
+        return detector
+    s = str(detector).strip()
+    return int(s[-1]) if s and s[-1].isdigit() else 2
+
+
 # ----------------------------------------------------------------- cache ----
 def cache_path(spec: Spec):
     ra, dec = field_center(spec)
@@ -67,35 +101,104 @@ def load_cube(path):
                 str(z["detector"]), "CACHE", int(z["n_found"]))
 
 
+# --------------------------------------------------- EC2 + S3 fetchers ------
+def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube | None:
+    """If the EC2 SSH tunnel (`127.0.0.1:8000`) is active and exposes `/api/cube`, fetch from EC2."""
+    try:
+        with httpx.Client(timeout=httpx.Timeout(12.0, connect=0.4)) as client:
+            r = client.get(
+                f"{EC2_BACKEND_URL}/api/cube",
+                params={"ra": ra, "dec": dec, "size": size_deg, "det": det},
+            )
+            if r.status_code != 200:
+                return None
+            z = np.load(io.BytesIO(r.content), allow_pickle=False)
+            grid = backend_make_grid(float(z["ra"]), float(z["dec"]), float(z["size_deg"]), float(z["pixscale_arcsec"]))
+            cube_arr = z["cube"].astype(float)
+            var_arr = z["var"].astype(float)
+            bad = ~np.isfinite(cube_arr) | ~np.isfinite(var_arr) | (var_arr <= 0)
+            cube_arr[bad] = np.nan
+            var_arr[bad] = np.nan
+            return Cube(
+                cube_arr,
+                var_arr,
+                z["mjd"].astype(float),
+                z["wl"].astype(float),
+                grid.wcs(),
+                detector_str,
+                "EC2-S3",
+                int(z["n_found"]),
+            )
+    except Exception:
+        return None
+
+
+def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube:
+    """Run `backend.sequence.load_frames` directly using the local S3 footprint index + S3 byte-range reads."""
+    grid = backend_make_grid(ra, dec, size_deg)
+    try:
+        loaded = asyncio.run(backend_load_frames(grid, det))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            loaded = loop.run_until_complete(backend_load_frames(grid, det))
+        finally:
+            loop.close()
+    except Exception as e:
+        raise DataFetchError(f"S3 backend fetch failed: {e}") from e
+    if not loaded.frames:
+        raise DataFetchError(
+            f"No usable SPHEREx {detector_str} frames found at RA={ra:.4f}°, Dec={dec:+.4f}° "
+            f"(index matched {len(loaded.refs)} exposures)."
+        )
+    return frames_to_cube(loaded.frames, grid, detector_str, source="S3-DIRECT", n_found=len(loaded.refs))
+
+
 # ------------------------------------------------------------------ load ----
 def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
-    """Returns (Cube, info dict). Order: demo -> cache -> IRSA."""
+    """Returns (Cube, info dict). Order: demo -> local cache -> EC2 tunnel -> local S3 range-read backend."""
+    from .clean import build_cube
+
+    t0 = time.perf_counter()
     ra, dec = field_center(spec)
-    info = dict(center=(ra, dec), planes=None)
+    info = dict(center=(ra, dec), planes=None, elapsed_s=0.0)
     if demo:
         raw, fra, fdec = synthetic_raw(spec.as_target(), spec.detector, fov_arcsec=spec.fov_arcsec,
                                        seed=seed)
         cube = build_cube(raw, fra, fdec, spec.fov_arcsec, spec.detector, "SYNTHETIC", len(raw))
+        info["elapsed_s"] = time.perf_counter() - t0
         return cube, info
+
     path = cache_path(spec)
     if use_cache and os.path.exists(path):
-        return load_cube(path), info
-    planes = irsa.query_planes(ra, dec, detector=spec.detector)
-    info["planes"] = irsa.count_by_detector(planes)
-    size_deg = spec.fov_arcsec * 1.6 / 3600.0          # extra room for detector rotation
-    raw, n_found = irsa.fetch_detector(planes, spec.detector, ra, dec, size_deg, progress=progress)
-    cube = build_cube(raw, ra, dec, spec.fov_arcsec, spec.detector, "IRSA", n_found)
+        cube = load_cube(path)
+        info["elapsed_s"] = time.perf_counter() - t0
+        return cube, info
+
+    size_deg = max(min(spec.fov_arcsec / 3600.0, config.MAX_FOV_DEG), 0.01)
+    det_num = _det_int(spec.detector)
+    if progress:
+        progress(1, 4)
+
+    cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector)
+    if cube is None:
+        cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector)
+
+    if progress:
+        progress(4, 4)
     try:
         save_cube(path, cube)
     except OSError:
         pass
+    info["elapsed_s"] = time.perf_counter() - t0
     return cube, info
 
 
 # ------------------------------------------------------------------- run ----
-def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
+def run(spec: Spec, mode="target", same_colour=False, demo=False, use_cache=True, n_null=300,
         progress=None, null_progress=None, seed=0):
-    cube, info = load_frames(spec, demo=demo, progress=progress, seed=seed)
+    t_start = time.perf_counter()
+    cube, info = load_frames(spec, demo=demo, use_cache=use_cache, progress=progress, seed=seed)
     cube = flatten(cube)
     if same_colour:
         cube = select_same_colour(cube)
@@ -109,7 +212,8 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
 
     m = float(cube.mjd.mean())
     x0, y0 = pos(m)
-    xa, ya = pos(m + 0.5 * 365.25); xb, yb = pos(m - 0.5 * 365.25)
+    xa, ya = pos(m + 0.5 * 365.25)
+    xb, yb = pos(m - 0.5 * 365.25)
     v_exp = (xa - xb, ya - yb)
     ny, nx = cube.cube.shape[1:]
     in_field = 0 <= x0 < nx and 0 <= y0 < ny
@@ -117,9 +221,12 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, n_null=300,
     verdict = assess(cube, mode=mode, v0=v_exp, center=(x0, y0), n_null=n_null,
                      seed=seed + 1, progress=null_progress)
     v_tr = (verdict["best"]["vx"], verdict["best"]["vy"]) if mode == "blind" else v_exp
-    payload = build_payload(cube, pos if in_field else None, v_exp, v_tr)
+    payload = build_payload(cube, pos if in_field else None, v_exp, v_tr,
+                            best_track=verdict.get("best"))
 
-    notes = []
+    total_s = time.perf_counter() - t_start
+    info["total_s"] = total_s
+    notes = [f"Processed in {total_s:.2f}s (fetch: {info.get('elapsed_s', 0.0):.2f}s · source: {cube.source})."]
     ra_c, dec_c = info["center"]
     if abs(spec.epoch - MID_EPOCH) > 1.0 and (spec.pmra or spec.pmdec):
         sh = 3600 * np.hypot((ra_c - spec.ra) * np.cos(np.radians(dec_c)), dec_c - spec.dec)

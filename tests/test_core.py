@@ -65,3 +65,26 @@ def test_full_pipeline_demo_all_presets():
     for t in targets.PRESETS.values():
         out = pipeline.run(pipeline.spec_from_target(t), demo=True, n_null=60)
         assert out["payload"]["views"]["frames"] and out["verdict"]["n_frames"] >= 4
+        assert out["payload"]["views"]["frames"][0]["raws"]
+        assert out["payload"]["views"]["lmdiff"]
+        assert out["payload"]["traj_best"] is not None
+        assert out["payload"]["spectrum"] is not None
+
+
+
+def test_saturated_core_reconstruction_preserves_bad_pixels():
+    img = np.zeros((10, 10))
+    # Bright star at (5, 5) with NaN core surrounded by bright wings (> 5 sigma)
+    img[4:7, 4:7] = 12.0
+    img[5, 5] = np.nan
+    # Isolated bad detector pixel at (1, 1) surrounded by ~0 sky
+    img[1, 1] = np.nan
+    rec, sat_core, rem_bad = clean_or_render_reconstruct(img)
+    assert sat_core[5, 5] and np.isfinite(rec[5, 5]) and rec[5, 5] > 12.0
+    assert rem_bad[1, 1] and not sat_core[1, 1]
+
+
+def clean_or_render_reconstruct(img):
+    from drift.render import reconstruct_saturated_cores
+    return reconstruct_saturated_cores(img, 1.0)
+

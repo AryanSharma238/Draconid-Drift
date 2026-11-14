@@ -28,8 +28,8 @@
  <button class="go" id="launch">Use this position &rarr;</button>
  <small id="hint">Scroll to zoom, drag to pan. Equatorial (ICRS) coordinates. Preset markers sit at their current (moved) positions.</small>
 </div>
-<script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
-<script>
+<script type="module">
+import A from "https://cdn.jsdelivr.net/npm/aladin-lite@3.8.2/dist/aladin.js";
 const INIT = __INIT__;     // {ra, dec, fov, presets:[{key,name,ra,dec}]}
 let aladin, cat, sel = null;
 function select(ra, dec){
@@ -63,5 +63,5 @@ A.init.then(() => {
     catch (err) { prompt('Copy these into the RA / Dec boxes below:', sel.ra.toFixed(6) + ' ' + sel.dec.toFixed(6)); }
   };
   if (INIT.ra !== null) jump(INIT.ra, INIT.dec, 900);
-});
+}).catch(err => { document.getElementById('coords').textContent = 'Map failed to start: ' + err + '. Use the RA/Dec boxes below.'; });
 </script></body></html>

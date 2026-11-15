@@ -233,89 +233,106 @@ function bindSky() {
  clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  // right button: draw an area. Swallowed before Aladin sees it (Aladin uses right-drag for contrast).
+  // Right-click drag: draw a smooth circular selection area that stretches insensitively
   let sel = null;
   const stop = e => { e.stopPropagation(); e.preventDefault(); };
   const begin = e => {
     if (e.button !== 2) { if (homeOk() && e.button === 0) wake(); return; }
     stop(e); if (!homeOk() || sel) return;
     wake(); const r = rect();
-    sel = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top };
-    drawSel(); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
+    sel = { cx: e.clientX - r.left, cy: e.clientY - r.top, r: 0 };
+    drawSel(); selEl.classList.remove("fading"); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
   };
   clip.addEventListener("pointerdown", begin, true);
   clip.addEventListener("mousedown", e => { if (e.button === 2) stop(e); }, true);
+
   const drawSel = () => {
-    const l = Math.min(sel.x0, sel.x1), t = Math.min(sel.y0, sel.y1);
-    Object.assign(selEl.style, { left: l + "px", top: t + "px", width: Math.abs(sel.x1 - sel.x0) + "px", height: Math.abs(sel.y1 - sel.y0) + "px" });
+    if (!sel) return;
+    const d = Math.round(sel.r * 2);
+    Object.assign(selEl.style, {
+      left: `${sel.cx}px`,
+      top: `${sel.cy}px`,
+      width: `${d}px`,
+      height: `${d}px`
+    });
   };
+
   window.addEventListener("pointermove", e => {
     if (!sel) return; stop(e);
-    const r = rect(), A = panelA(), dx = e.clientX - r.left - sel.x0, dy = e.clientY - r.top - sel.y0;
-    const w = Math.max(Math.abs(dx), Math.abs(dy) / A);          // locked to the panels' tall shape, like a photo crop
-    sel.x1 = sel.x0 + Math.sign(dx || 1) * w; sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A; drawSel();
+    const r = rect();
+    const dx = e.clientX - r.left - sel.cx;
+    const dy = e.clientY - r.top - sel.cy;
+    const rawDist = Math.hypot(dx, dy);
+    // Insensitive smooth stretching: dampened with exponent 0.85 and deadzone
+    const effectiveR = rawDist < 8 ? rawDist * 0.5 : 4 + Math.pow(rawDist - 8, 0.88) * 1.25;
+    sel.r = Math.max(12, Math.min(Math.min(sky.W, sky.H) * 0.45, effectiveR));
+    drawSel();
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
   window.addEventListener("mouseup", e => { if (sel && e.button === 2) stop(e); }, true);
   window.addEventListener("pointerup", async e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
-    const l = Math.min(s0.x0, s0.x1), r_ = Math.max(s0.x0, s0.x1), t = Math.min(s0.y0, s0.y1), b = Math.max(s0.y0, s0.y1);
-    const cx = (l + r_) / 2, cy = (t + b) / 2;
-    if (r_ - l < 4 || b - t < 4) { selEl.classList.remove("on"); return; }
-    const c = sky.pix2world(cx, cy), L = sky.pix2world(l, cy), R = sky.pix2world(r_, cy), T = sky.pix2world(cx, t), B = sky.pix2world(cx, b);
-    if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
-    // the field is the square that covers the whole highlighted area, centred on it
-    const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
-    if (side > 7200) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 2°.`); }
+    if (s0.r < 14) { selEl.classList.remove("on"); return; }
+    const cx = s0.cx, cy = s0.cy, rad = s0.r;
+
+    const c = sky.pix2world(cx, cy);
+    const topPt = sky.pix2world(cx, cy - rad);
+    const botPt = sky.pix2world(cx, cy + rad);
+    if (!c || !topPt || !botPt) { selEl.classList.remove("on"); return toast("Keep the selection circle inside the map."); }
+
+    // Diameter of selected circular region on the sky in arcseconds
+    const side = sepDeg(topPt, botPt) * 3600;
+    if (side > 7200) { selEl.classList.remove("on"); return toast(`That circle is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° across. Scroll to zoom in and pick up to 2°.`); }
     
-    // Keep the selected area visible with a smooth background fade into the flight
+    // Smooth transition into the background
     selEl.classList.add("fading");
     setTimeout(() => {
       selEl.classList.remove("on", "fading");
-    }, 900);
+    }, 850);
 
-  // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
-  let targetRa = c[0], targetDec = c[1];
-  const raStr = `${c[0].toFixed(2)}°`;
-  const decStr = `${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
-  let targetName = `Selected Area (${raStr}, ${decStr})`;
-  try {
-    const sw = 48, sh = 48;
-    const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
-    const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
-    let maxB = 0, bestX = sw / 2, bestY = sh / 2;
-    for (let py = 0; py < sh; py++) {
-      for (let px = 0; px < sw; px++) {
-        const idx = (py * sw + px) * 4;
-        const b = data[idx] + data[idx + 1] + data[idx + 2];
-        if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+    // Auto-snap to the brightest star / object within the circle by sampling HiPS pixels
+    let targetRa = c[0], targetDec = c[1];
+    const raStr = `${c[0].toFixed(2)}°`;
+    const decStr = `${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
+    let targetName = `Selected Region (${raStr}, ${decStr})`;
+    try {
+      const sw = 48, sh = 48;
+      const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+      const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+      let maxB = 0, bestX = sw / 2, bestY = sh / 2;
+      for (let py = 0; py < sh; py++) {
+        for (let px = 0; px < sw; px++) {
+          // Check circular mask within the square cutout
+          const ndx = px - sw / 2, ndy = py - sh / 2;
+          if (Math.hypot(ndx, ndy) > sw / 2) continue;
+          const idx = (py * sw + px) * 4;
+          const b = data[idx] + data[idx + 1] + data[idx + 2];
+          if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+        }
+      }
+      if (maxB > 60) {
+        const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
+        const degW = side / 3600;
+        const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
+        targetRa = ((c[0] + dRa) % 360 + 360) % 360;
+        targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+        targetName = `Selected Target (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
+      }
+    } catch (e) {
+      const boxRadiusDeg = Math.max(side / 7200, 0.08);
+      const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
+      if (catList && catList.length) {
+        let best = null, bestDist = boxRadiusDeg;
+        for (const obj of catList) {
+          const d = sepDeg([obj.ra, obj.dec], c);
+          if (d < bestDist) { bestDist = d; best = obj; }
+        }
+        if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
       }
     }
-    // If a clear star peak was found in the box, latch dead-center onto its brightest peak
-    if (maxB > 60) {
-      const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
-      const degW = side / 3600;
-      const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
-      targetRa = ((c[0] + dRa) % 360 + 360) % 360;
-      targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-      targetName = `Selected Object (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
-    }
-  } catch (e) {
-    // Fallback to catalog or center if cutout sampling fails
-    const boxRadiusDeg = Math.max(side / 7200, 0.08);
-    const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
-    if (catList && catList.length) {
-      let best = null, bestDist = boxRadiusDeg;
-      for (const obj of catList) {
-        const d = sepDeg([obj.ra, obj.dec], c);
-        if (d < bestDist) { bestDist = d; best = obj; }
-      }
-      if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
-    }
-  }
-  go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
-}, true);
+    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+  }, true);
 }
 
 /* ---------------------------------------------------------------- flight */

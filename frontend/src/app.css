@@ -134,10 +134,25 @@ nav{display:flex;align-items:center;gap:6px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 #info{aspect-ratio:auto;max-height:none}
 
-/* area selection + first-move hint */
-#sel{position:absolute;left:0;top:0;width:0;height:0;border:1.5px solid #e8be8c;background:rgba(232,190,140,0.18);box-shadow:0 0 16px rgba(232,190,140,0.3);border-radius:6px;opacity:0;pointer-events:none;z-index:10;transition:opacity .4s ease, border-color .3s ease, background .3s ease}
+/* area selection circle + first-move hint */
+#sel{
+  position:absolute;
+  left:0;
+  top:0;
+  width:0;
+  height:0;
+  border:2px solid #e8be8c;
+  background:radial-gradient(circle, rgba(232,190,140,0.22) 0%, rgba(232,190,140,0.06) 70%, transparent 100%);
+  box-shadow:0 0 20px rgba(232,190,140,0.4), inset 0 0 14px rgba(232,190,140,0.2);
+  border-radius:50%;
+  opacity:0;
+  pointer-events:none;
+  z-index:10;
+  transition:opacity .35s ease, transform .25s ease;
+  transform:translate(-50%, -50%);
+}
 #sel.on{opacity:1}
-#sel.fading{opacity:0;transform:scale(1.02);transition:opacity 0.8s ease-out, transform 0.8s ease-out}
+#sel.fading{opacity:0;transform:translate(-50%, -50%) scale(1.08);transition:opacity 0.85s ease-out, transform 0.85s ease-out}
 #app:not([data-view=home]):not([data-view=flying]) #sel{opacity:0}
 #app[data-view=flying] #sel{transition:opacity .9s;opacity:0}
 #tip{position:absolute;left:0;top:0;padding:7px 12px;border-radius:10px;background:#7A4A51;color:rgba(255,255,255,.88);font-size:13px;white-space:nowrap;opacity:0;pointer-events:none;z-index:12;transition:opacity .35s}

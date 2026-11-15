@@ -186,15 +186,15 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     r00 = float(ra0) + float(pmra) * (2000.0 - float(epoch0)) / 3.6e6 / max(np.cos(np.radians(d00)), 1e-6)
     ff = ex.submit(target_facts, name, r00, d00, float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0))
     try:
-        movers = fm.result(timeout=2.0)
+        movers = fm.result(timeout=1.4)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=2.2)
+        objects = fo.result(timeout=1.5)
     except Exception:
         objects = []
     try:
-        facts = ff.result(timeout=2.5)
+        facts = ff.result(timeout=1.5)
     except Exception:
         facts = {}
     ex.shutdown(wait=False)

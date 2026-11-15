@@ -121,57 +121,83 @@ def load_cube(path):
 
 # --------------------------------------------------- EC2 + S3 fetchers ------
 _EC2_CLIENT: httpx.Client | None = None
-EC2_MAX_FRAMES = 40   # the server sends an even-in-time subset; more frames add transfer time, not detail
+EC2_MAX_FRAMES = 24   # fast even-in-time subset for sub-2.5s response and smooth playback
 
 
 def _get_ec2_client() -> httpx.Client:
     global _EC2_CLIENT
     if _EC2_CLIENT is None:
-        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(30.0, connect=0.6))
+        _EC2_CLIENT = httpx.Client(
+            timeout=httpx.Timeout(45.0, connect=2.0),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=60.0),
+        )
     return _EC2_CLIENT
+
+
+def ec2_health(timeout: float = 1.5) -> dict:
+    """Check whether the EC2 backend SSH tunnel is reachable and healthy."""
+    try:
+        r = _get_ec2_client().get(f"{EC2_BACKEND_URL}/api/health", timeout=timeout)
+        if r.status_code == 200:
+            return {"connected": True, "url": EC2_BACKEND_URL, "detail": r.json()}
+        return {"connected": False, "url": EC2_BACKEND_URL, "status": r.status_code}
+    except Exception as exc:
+        return {"connected": False, "url": EC2_BACKEND_URL, "error": str(exc)}
 
 
 def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, detector_str: str, cap=None) -> Cube | None:
     """If the EC2 SSH tunnel (`127.0.0.1:8000`) is active and exposes `/api/cube`, fetch from EC2."""
-    try:
-        client = _get_ec2_client()
-        r = client.get(
-            f"{EC2_BACKEND_URL}/api/cube",
-            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": cap or EC2_MAX_FRAMES, "dtype": "f2"},
-        )
-        if r.status_code == 404:
-            raise DataFetchError("no usable SPHEREx frames at this position")
-        if r.status_code != 200:
+    import time as _time
+    client = _get_ec2_client()
+    params = {"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": cap or EC2_MAX_FRAMES, "dtype": "f2"}
+    last_err = None
+    for attempt in range(3):
+        try:
+            r = client.get(f"{EC2_BACKEND_URL}/api/cube", params=params)
+            if r.status_code == 404:
+                raise DataFetchError("no usable SPHEREx frames at this position")
+            if r.status_code != 200:
+                return None
+            z = np.load(io.BytesIO(r.content), allow_pickle=False)
+            grid = backend_make_grid(float(z["ra"]), float(z["dec"]), float(z["size_deg"]), float(z["pixscale_arcsec"]))
+            cube_arr = z["cube"].astype(float)
+            var_arr = z["var"].astype(float)
+            bad = ~np.isfinite(cube_arr) | ~np.isfinite(var_arr) | (var_arr <= 0)
+            cube_arr[bad] = np.nan
+            var_arr[bad] = np.nan
+            return Cube(
+                cube_arr,
+                var_arr,
+                z["mjd"].astype(float),
+                z["wl"].astype(float),
+                grid.wcs(),
+                detector_str,
+                "EC2-S3",
+                int(z["n_found"]),
+            )
+        except DataFetchError:
+            raise
+        except httpx.ConnectTimeout:
             return None
-        z = np.load(io.BytesIO(r.content), allow_pickle=False)
-        grid = backend_make_grid(float(z["ra"]), float(z["dec"]), float(z["size_deg"]), float(z["pixscale_arcsec"]))
-        cube_arr = z["cube"].astype(float)
-        var_arr = z["var"].astype(float)
-        bad = ~np.isfinite(cube_arr) | ~np.isfinite(var_arr) | (var_arr <= 0)
-        cube_arr[bad] = np.nan
-        var_arr[bad] = np.nan
-        return Cube(
-            cube_arr,
-            var_arr,
-            z["mjd"].astype(float),
-            z["wl"].astype(float),
-            grid.wcs(),
-            detector_str,
-            "EC2-S3",
-            int(z["n_found"]),
-        )
-    except DataFetchError:
-        raise
-    except httpx.TimeoutException as e:
-        # the server is up but slow: fetching everything again from here would be slower still
-        if isinstance(e, httpx.ConnectTimeout):
+        except httpx.TimeoutException as e:
+            last_err = e
+            if attempt < 2:
+                _time.sleep(0.25 * (attempt + 1))
+                continue
+            raise DataFetchError("the data server took too long; try again in a moment") from e
+        except httpx.TransportError as e:
+            last_err = e
+            if attempt < 2:
+                _time.sleep(0.25 * (attempt + 1))
+                continue
             return None
-        raise DataFetchError("the data server took too long; try again in a moment") from e
-    except Exception:
+        except Exception:
+            return None
+    if last_err:
         return None
 
 
-LIVE_MAX_FRAMES = 60    # without the EC2 server, fetch at most this many exposures (evenly spread in time)
+LIVE_MAX_FRAMES = 24    # without the EC2 server, fetch at most this many exposures (evenly spread in time)
 LIVE_MAX_DEG = 0.5      # ... and at most this field size
 
 

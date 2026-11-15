@@ -80,7 +80,11 @@ function tanToSky(ra0, dec0, xi, eta) {
  * `tweak` lets the caller adjust colour per pixel batch (gamma/brightness) -> {gain, gamma}
  */
 export async function renderCutout(survey, ra, dec, fovDeg, w, h, tweak = {}, opts = {}) {
-  const order = survey.order, nsC = 2 ** order * 512;
+  // use the coarsest tile level that still has at least the output's detail: far fewer tiles for wide fields
+  const outArcsec = fovDeg * 3600 / w;
+  let order = survey.order;
+  while (order > 3 && 3600 * 58.63 / (512 * 2 ** (order - 1)) <= outArcsec) order--;
+  const nsC = 2 ** order * 512;
   const tiles = new Map(), parents = new Map();
   const load = (o, i) => loadTile(survey.url, o, i, survey.slice, survey.fmt || "jpg");
   await Promise.all(tilesFor(ra, dec, fovDeg * Math.hypot(1, h / w), order, 11).map(async i => tiles.set(i, await load(order, i))));

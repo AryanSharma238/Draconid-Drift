@@ -121,7 +121,7 @@ def load_cube(path):
 
 # --------------------------------------------------- EC2 + S3 fetchers ------
 _EC2_CLIENT: httpx.Client | None = None
-EC2_MAX_FRAMES = 90   # the server sends an even-in-time subset; more frames add transfer time, not detail
+EC2_MAX_FRAMES = 40   # the server sends an even-in-time subset; more frames add transfer time, not detail
 
 
 def _get_ec2_client() -> httpx.Client:
@@ -137,7 +137,7 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
         client = _get_ec2_client()
         r = client.get(
             f"{EC2_BACKEND_URL}/api/cube",
-            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": EC2_MAX_FRAMES},
+            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": EC2_MAX_FRAMES, "dtype": "f2"},
         )
         if r.status_code == 404:
             raise DataFetchError("no usable SPHEREx frames at this position")

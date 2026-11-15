@@ -3,7 +3,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Draconid Drift</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head><body>
 <div id="app" data-view="home">
@@ -20,7 +20,9 @@
   <header id="bar">
     <button id="brand" type="button">Draconid Drift</button>
     <nav>
-      <button id="aboutBtn" type="button">About</button>
+      <button class="navb" data-page="targets" type="button">Targets</button>
+      <button class="navb" data-page="how" type="button">How it works</button>
+      <button class="navb" data-page="data" type="button">Data</button>
       <div id="search">
         <div id="sfield"><input id="q" type="text" placeholder="Search for an object" autocomplete="off" spellcheck="false" aria-label="Search for an object"></div>
         <button id="sbtn" type="button" aria-label="Search" aria-expanded="false">
@@ -34,9 +36,9 @@
   </header>
 
   <main id="page2">
-    <section class="panel img" id="pWise"><canvas id="wiseCv"></canvas>
+    <section class="panel img" id="pWise"><canvas id="wiseCv"></canvas><canvas class="hl" id="wiseHl"></canvas>
       <div class="lab"><h2 id="wiseH">AllWISE</h2><p id="wiseCap">2010</p></div></section>
-    <section class="panel img" id="pSpx"><canvas id="spxCv"></canvas>
+    <section class="panel img" id="pSpx"><canvas id="spxCv"></canvas><canvas class="hl" id="spxHl"></canvas>
       <div class="lab"><h2>SPHEREx</h2><p id="spxCap"></p></div>
       <div class="ctrl"><button id="play" type="button" aria-label="Pause"><svg viewBox="0 0 24 24" width="16" height="16"><g class="ip"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></g><path class="ia" d="M7 5v14l12-7z"/></svg></button>
         <div id="track"><div id="fill"></div><div id="thumb"></div></div></div></section>
@@ -44,12 +46,25 @@
       <div class="blk"><h3>What we are looking at</h3><div class="big" id="iName"></div></div>
       <div class="blk"><h3>Coords</h3><div class="coord" id="iCoord"></div></div>
       <div class="blk"><h3>More info</h3><div id="iVerdict"></div></div>
-      <div class="blk grow"><h3>In the frame</h3><div class="empty" id="iObjs">Nothing here yet</div></div>
+      <div class="blk grow"><h3>In the frame</h3><ul class="objs" id="iObjs"></ul></div>
     </aside>
   </main>
   <footer id="foot"></footer>
 
-  <section id="about" aria-hidden="true"></section>
+  <section id="about" aria-hidden="true">
+    <div class="pg" data-page="targets"><h1>Targets</h1><p>Stars and brown dwarfs close enough to the Sun that SPHEREx sees them move. Pick one to fly there.</p><ul id="tlist"></ul></div>
+    <div class="pg" data-page="how"><h1>How it works</h1>
+      <p>SPHEREx maps the whole sky every six months. Draconid Drift pulls every SPHEREx exposure that covers the spot you choose, cleans and lines them up, and plays them in time order.</p>
+      <p>To see motion over decades, the left panel shows the same patch from an older survey: 2MASS (about 2000) or AllWISE (2010), blurred to SPHEREx's sharpness so the two compare fairly.</p>
+      <p>A star counts as moving when it is clearly detected where it should be now and its old position is empty. Each claim is checked against random spots in the same frames, so the confidence shown is how often noise alone would pass.</p>
+      <p>The list beside the images names what is in view from SIMBAD. Bright sources with no name are sorted into star, galaxy or nebula by a small model trained on SPHEREx sources that SIMBAD has already identified.</p></div>
+    <div class="pg" data-page="data"><h1>Data</h1>
+      <p><b>SPHEREx</b> spectral images, NASA/IPAC Infrared Science Archive.</p>
+      <p><b>2MASS</b> and <b>AllWISE</b> sky maps, served as HiPS by IRSA and CDS.</p>
+      <p><b>Gaia DR3</b> proper motions, ESA.</p>
+      <p><b>SIMBAD</b> object names and types, CDS Strasbourg (Harvard mirror).</p>
+      <p>Built for the NASA Space Apps Challenge 2026, Planet X and SPHEREx.</p></div>
+  </section>
   <div id="toast" role="status"></div>
 </div>
 <script type="module" src="app.js"></script>

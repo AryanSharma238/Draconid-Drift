@@ -104,10 +104,20 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
         years.append(round(float(np.asarray(mjd_to_year(cube.mjd[i]))), 4))
         wl.append(None if not np.isfinite(cube.wl[i]) else round(float(cube.wl[i]), 2))
     ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
-    try:
-        movers = find_movers(cube, wise_epoch=cmp["epoch"], target=dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0)))
-    except Exception:
-        movers = []
+    from concurrent.futures import ThreadPoolExecutor
+    from .inframe import in_frame
+    tgt = dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0))
+    with ThreadPoolExecutor(2) as ex:            # Gaia and SIMBAD lookups at the same time
+        fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
+        fo = ex.submit(in_frame, cube)
+        try:
+            movers = fm.result()
+        except Exception:
+            movers = []
+        try:
+            objects = fo.result()
+        except Exception:
+            objects = []
     verdict = verdict_summary(res["verdict"])
     tm = [m for m in movers if m["name"] == name]
     if tm:                                         # long-baseline motion confirmed against the archive image
@@ -116,6 +126,6 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
-                movers=movers,
+                movers=movers, objects=objects,
                 detector=cube.detector, compare=cmp,
                 verdict=verdict, source=cube.source)

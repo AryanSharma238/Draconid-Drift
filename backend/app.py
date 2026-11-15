@@ -281,6 +281,7 @@ async def api_cube(
     size: float = config.DEFAULT_FOV_DEG,
     det: int = config.DETECTORS[-1],
     max_frames: int = 0,
+    dtype: str = "f4",
 ) -> Response:
     """Fast binary float32 cube endpoint for Draconid Drift UI over SSH tunnel or local backend."""
     import io
@@ -314,6 +315,8 @@ async def api_cube(
     mjd_arr = np.array([f.ref.t_mjd for f in frames], dtype=np.float64)
     wl_arr = np.array([f.lambda_um for f in frames], dtype=np.float64)
     pass_arr = np.array([f.pass_idx for f in frames], dtype=np.int32)
+    if dtype == "f2":                     # half the bytes on the wire; SPHEREx counts fit float16 comfortably
+        cube_arr, var_arr = cube_arr.astype(np.float16), var_arr.astype(np.float16)
     buf = io.BytesIO()
     np.savez(
         buf,

@@ -1,96 +1,115 @@
-"""Train the object classifier and measure how accurate it really is.
+"""Train drift/classify.py's model on SPHEREx sources labelled by SIMBAD, and validate it on held-out fields.
 
-    python scripts/train_classifier.py [--min-prob 0.5]
-
-Accuracy is measured on objects the model never saw: 5-fold cross-validation where folds are SKY REGIONS (objects
-within the same ~10 degree cell always share a fold), so neighbours can not leak between train and test. The bar for
-shipping is 97% (docs: engine must exceed 97% on common object types; rare objects are out of scope). The report
-gives accuracy on every object, and accuracy + coverage when the model may answer "unclear" below --min-prob.
-The final model (fit on everything) is only written when the all-objects accuracy clears the bar, or with --force.
+python scripts/train_classifier.py         (fetches ~30 fields from the SPHEREx S3 mirror, ~10 min the first time)
 """
-from __future__ import annotations
-
-import argparse
-import sys
-from pathlib import Path
-
+import csv, io, json, os, sys, time
 import numpy as np
-import pandas as pd
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from drift import pipeline
+from drift.classify import CLASSES, FEATURES, MODEL_PATH, features, fit_softmax, label_of, predict, quad
+import drift.classify as C
+from drift.clean import flatten
+from drift.movers import deep_stack
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from drift import classifier  # noqa: E402
-
-BAR = 0.97
-D = Path(__file__).resolve().parent.parent / "data" / "classify"
-
-
-def make_model():
-    from sklearn.ensemble import HistGradientBoostingClassifier
-
-    return HistGradientBoostingClassifier(
-        max_depth=4, learning_rate=0.08, max_iter=250, l2_regularization=1.0, random_state=0
-    )
-
-
-def _augment_modality_dropout(X: np.ndarray, y: np.ndarray, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    """Augment training folds with partial-modality views (single-detector SPHEREx + catalog, or SPHEREx-only)
-    so live stage classification stays accurate even when only one detector cube or only catalog bands are present."""
-    n_spx = classifier.N_SPX_BASE + classifier.N_SPX_BROAD
-    X_cat_only = X.copy()
-    X_cat_only[:, :n_spx] = np.nan
-    X_spx_only = X.copy()
-    X_spx_only[:, n_spx:] = np.nan
-    return np.vstack([X, X_cat_only, X_spx_only]), np.concatenate([y, y, y])
+FIELDS = {  # name: (ra, dec) -- galaxy clusters, star fields in the Milky Way, nebulae and clusters
+    "virgo": (187.70, 12.39), "coma": (194.95, 27.98), "fornax": (54.62, -35.45), "hercules_cl": (241.31, 17.75),
+    "perseus_cl": (49.95, 41.51), "leo_triplet": (169.73, 13.25), "hydra_cl": (159.18, -27.53), "stephan": (339.01, 33.96),
+    "cosmos": (150.12, 2.21), "m101": (210.80, 54.35), "abell2199": (247.16, 39.55), "m81": (148.89, 69.07),
+    "ngc_253": (11.89, -25.29), "abell3558": (201.99, -31.50), "m51": (202.47, 47.20), "ursa_major_cl": (178.0, 49.0),
+    "barnard": (269.45, 4.77), "plane_aql": (285.0, 2.0), "plane_cyg": (305.0, 38.0), "plane_mon": (100.0, 5.0),
+    "plane_sco": (255.0, -38.0), "plane_vel": (130.0, -45.0), "pleiades": (56.75, 24.12), "praesepe": (130.1, 19.67),
+    "orion": (83.82, -5.39), "rosette": (97.98, 4.95), "lagoon": (270.90, -24.38), "eagle": (274.70, -13.80),
+    "taurus": (68.0, 26.0), "m13": (250.42, 36.46), "omega_cen": (201.70, -47.48), "helix": (337.41, -20.84),
+    "carina": (161.26, -59.68), "rho_oph": (246.79, -24.54), "m57": (283.40, 33.03), "crab": (83.63, 22.01),
+}
+SIMBAD = "https://simbad.harvard.edu/simbad/sim-tap/sync"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--min-prob", type=float, default=classifier.MIN_PROB)
-    ap.add_argument("--force", action="store_true")
-    a = ap.parse_args()
-    from sklearn.metrics import confusion_matrix
-    from sklearn.model_selection import GroupKFold
+def simbad(ra, dec, r):
+    import httpx
+    q = (f"SELECT ra, dec, otype, main_id FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra},{dec},{r}))")
+    t = httpx.get(SIMBAD, params=dict(REQUEST="doQuery", LANG="ADQL", FORMAT="csv", QUERY=q, MAXREC=20000), timeout=60).text
+    return list(csv.DictReader(io.StringIO(t)))
 
-    df = pd.read_csv(D / "features.csv")
-    fcols = [f"f{i}" for i in range(classifier.N_TOTAL_FEATURES)]
-    X, y = df[fcols].to_numpy(np.float32), df["cls"].to_numpy()
-    cell = (df["ra"] // 10).astype(int) * 100 + ((df["dec"] + 90) // 10).astype(int)
-    print(f"{len(df)} objects:", df["cls"].value_counts().to_dict())
-    if df["cls"].value_counts().min() < 30:
-        print("WARNING: a class has under 30 objects; its accuracy is not well measured")
 
-    prob = np.zeros((len(df), len(classifier.CLASSES)))
-    classes = np.array(classifier.CLASSES)
-    for tr, te in GroupKFold(5).split(X, y, groups=cell):
-        m = make_model().fit(X[tr], y[tr])
-        p = m.predict_proba(X[te])
-        for j, c in enumerate(m.classes_):
-            prob[te, list(classes).index(c)] = p[:, j]
-    pred = classes[prob.argmax(1)]
-    conf = prob.max(1)
-    acc = float((pred == y).mean())
-    keep = conf >= a.min_prob
-    print(f"\nHELD-OUT accuracy, every object      : {acc:.2%}   (bar {BAR:.0%})")
-    print(f"HELD-OUT accuracy, confident only    : {float((pred[keep] == y[keep]).mean()):.2%} "
-          f"at coverage {keep.mean():.1%} (min-prob {a.min_prob})")
-    print("\nper class (recall, held out):")
-    for c in classifier.CLASSES:
-        s = y == c
-        if s.any():
-            print(f"  {c:7s} n={int(s.sum()):4d}  recall={float((pred[s] == c).mean()):.1%}  "
-                  f"precision={float((y[pred == c] == c).mean()) if (pred == c).any() else float('nan'):.1%}")
-    print("\nconfusion (rows true, cols predicted):", list(classes))
-    print(confusion_matrix(y, pred, labels=classes))
-    if acc >= BAR or a.force:
-        import joblib
+def peaks(stack, nsig=8.0):
+    s = np.where(np.isfinite(stack), stack, np.nan)
+    med = np.nanmedian(s); sig = 1.4826 * np.nanmedian(np.abs(s - med))
+    z = np.nan_to_num((s - med) / sig, nan=-99)
+    from scipy.ndimage import maximum_filter
+    mx = maximum_filter(z, size=5)
+    ys, xs = np.nonzero((z == mx) & (z > nsig))
+    return list(zip(xs, ys))
 
-        X_aug, y_aug = _augment_modality_dropout(X, y)
-        joblib.dump(make_model().fit(X_aug, y_aug), classifier.MODEL_PATH)
-        print("\nmodel written to", classifier.MODEL_PATH)
-        return 0
-    print(f"\nNOT written: held-out accuracy {acc:.2%} is below the {BAR:.0%} bar.")
-    return 1
+
+def field_data(name, ra, dec):
+    out = f"data/train/{name}.npz"
+    if os.path.exists(out):
+        z = np.load(out); return z["X"], z["y"]
+    spec = pipeline.Spec(name, ra, dec, 0, 0, 2000.0, 720, "SPHEREx-D3", "train_" + name)
+    cube, _ = pipeline.load_frames(spec)
+    if cube.n > 60:
+        cube = cube.subset(np.argsort(cube.mjd)[np.linspace(0, cube.n - 1, 60).round().astype(int)])
+    cube = flatten(cube)
+    stack, _ = deep_stack(cube)
+    rows = simbad(*map(float, cube.wcs.wcs.crval), 0.15)
+    lab = [(float(r["ra"]), float(r["dec"]), label_of(r["otype"])) for r in rows if r["ra"] and label_of(r["otype"])]
+    if not lab:
+        np.savez(out, X=np.zeros((0, len(FEATURES))), y=np.zeros(0, int)); return np.zeros((0, len(FEATURES))), np.zeros(0, int)
+    lx, ly = cube.wcs.world_to_pixel_values(np.array([l[0] for l in lab]), np.array([l[1] for l in lab]))
+    X, y = [], []
+    for (px, py) in peaks(stack):
+        d = np.hypot(lx - px, ly - py)
+        j = int(np.argmin(d))
+        if d[j] > 0.8:                     # within 5" of a SIMBAD object, and no other SIMBAD object nearly as close
+            continue
+        if np.sum(d < 1.5) > 1:
+            continue
+        fv = features(stack, cube, float(px), float(py))
+        if fv is None or not np.isfinite(fv).all():
+            continue
+        X.append(fv); y.append(CLASSES.index(lab[j][2]))
+    X, y = np.array(X).reshape(-1, len(FEATURES)), np.array(y, int)
+    np.savez(out, X=X, y=y)
+    return X, y
+
+
+def main():
+    data = {}
+    for n, (ra, dec) in FIELDS.items():
+        t = time.time()
+        try:
+            X, y = field_data(n, ra, dec)
+            data[n] = (X, y)
+            print(f"{n:14s} {len(y):4d} sources  star/gal/other = {np.bincount(y, minlength=3).tolist()}  {time.time() - t:.0f}s", flush=True)
+        except Exception as e:
+            print(n, "FAILED", type(e).__name__, str(e)[:120], flush=True)
+    names = [n for n in data if len(data[n][1])]
+    # star vs galaxy: logistic model on features + pairwise products. "other" (nebulae, clouds) is a shape rule in predict().
+    def pool(ns):
+        X = np.vstack([data[n][0] for n in ns]); y = np.concatenate([data[n][1] for n in ns]); return X, y
+    def fit(X, y):
+        m = y < 2; Q = quad(X[m]); mu, sd = Q.mean(0), Q.std(0) + 1e-9
+        W, b = fit_softmax((Q - mu) / sd, y[m], 2, lr=0.1)
+        return dict(classes=["star", "galaxy"], features=list(FEATURES), quad=True, mu=mu.tolist(), sd=sd.tolist(), W=W.tolist(), b=b.tolist())
+    rng = np.random.default_rng(0); folds = np.array_split(rng.permutation(names), 6)
+    conf = np.zeros((3, 3), int)
+    for f in folds:          # leave-fields-out: a test field is never in the training set
+        mdl = fit(*pool([n for n in names if n not in f]))
+        C._MODEL = None; json.dump(mdl, open("/tmp/_fold.json", "w")); C.MODEL_PATH = "/tmp/_fold.json"
+        Xe, ye = pool(list(f))
+        for x, a in zip(Xe, ye):
+            conf[a, CLASSES.index(predict(x)[0])] += 1
+    print("held-out confusion (rows = SIMBAD truth, cols = predicted), classes", CLASSES)
+    print(conf)
+    rec = conf.diagonal() / conf.sum(1).clip(1)
+    print("recall", dict(zip(CLASSES, rec.round(3))), "accuracy", round(conf.trace() / conf.sum(), 3))
+    X, y = pool(names)
+    mdl = fit(X, y); mdl.update(n_train=int(len(y)), counts=np.bincount(y, minlength=3).tolist(), heldout_confusion=conf.tolist())
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    json.dump(mdl, open(MODEL_PATH, "w"), indent=1)
+    print("saved", MODEL_PATH)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

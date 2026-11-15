@@ -28,7 +28,7 @@ GAIA_TAP = "https://gea.esac.esa.int/tap-server/tap/sync"
 
 
 @functools.lru_cache(maxsize=256)
-def gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=8.0):
+def _gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=8.0):
     """Gaia DR3 stars with total proper motion >= pm_min_masyr inside a cone. [] if Gaia is unreachable."""
     import httpx
     q = (f"SELECT source_id, ra, dec, pmra, pmdec, phot_g_mean_mag FROM gaiadr3.gaia_source "
@@ -47,6 +47,44 @@ def gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=8.0):
                       pmra=float(x["pmra"]), pmdec=float(x["pmdec"]),
                       g=float(x["phot_g_mean_mag"]) if np.isfinite(x["phot_g_mean_mag"]) else 99.0,
                       epoch=GAIA_EPOCH) for x in rows)
+
+
+@functools.lru_cache(maxsize=256)
+def simbad_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=6.0):
+    """Same as the Gaia query, from SIMBAD's Harvard mirror (usually answers in about a second). None if unreachable."""
+    from .naming import _tap
+    rows = _tap(f"SELECT main_id, ra, dec, pmra, pmdec FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),"
+                f"CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_deg:.5f})) AND pmra*pmra + pmdec*pmdec >= {pm_min_masyr ** 2:.1f}", timeout)
+    if rows is None:
+        return None
+    out = []
+    for r in rows:
+        try:
+            out.append(dict(name=str(r["main_id"]).strip('"'), ra=float(r["ra"]), dec=float(r["dec"]), pmra=float(r["pmra"]),
+                            pmdec=float(r["pmdec"]), g=99.0, epoch=2000.0))
+        except (ValueError, TypeError, KeyError):
+            pass
+    return tuple(out)
+
+
+def gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, wait=1.5):
+    """Fast stars from Gaia and SIMBAD asked at once; Gaia is used if it answers within `wait` seconds, SIMBAD fills the rest."""
+    from concurrent.futures import ThreadPoolExecutor, wait as fwait
+    ex = ThreadPoolExecutor(2)
+    fg = ex.submit(_gaia_fast_stars, ra, dec, radius_deg, pm_min_masyr)
+    fs = ex.submit(simbad_fast_stars, ra, dec, radius_deg, pm_min_masyr)
+    fwait([fs], timeout=7.0)
+    fwait([fg], timeout=wait)
+    ex.shutdown(wait=False)
+    gaia = fg.result() if fg.done() else ()
+    sim = (fs.result() if fs.done() else None) or ()
+    out = list(gaia)
+    for s in sim:                      # SIMBAD stars Gaia did not return (or all of them, when Gaia was slow)
+        d0 = s["dec"] + s["pmdec"] * (GAIA_EPOCH - 2000) / 3.6e6
+        a0 = s["ra"] + s["pmra"] * (GAIA_EPOCH - 2000) / 3.6e6 / max(np.cos(np.radians(d0)), 1e-6)
+        if not any(abs(g["dec"] - d0) * 3600 < 3 and abs(g["ra"] - a0) * np.cos(np.radians(d0)) * 3600 < 3 for g in gaia):
+            out.append(s)
+    return tuple(out)
 
 
 def deep_stack(cube):

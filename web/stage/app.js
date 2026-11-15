@@ -157,7 +157,12 @@ function bindSky() {
     const l = Math.min(sel.x0, sel.x1), t = Math.min(sel.y0, sel.y1);
     Object.assign(selEl.style, { left: l + "px", top: t + "px", width: Math.abs(sel.x1 - sel.x0) + "px", height: Math.abs(sel.y1 - sel.y0) + "px" });
   };
-  window.addEventListener("pointermove", e => { if (!sel) return; stop(e); const r = rect(); sel.x1 = e.clientX - r.left; sel.y1 = e.clientY - r.top; drawSel(); }, true);
+  window.addEventListener("pointermove", e => {
+    if (!sel) return; stop(e);
+    const r = rect(), A = panelA(), dx = e.clientX - r.left - sel.x0, dy = e.clientY - r.top - sel.y0;
+    const w = Math.max(Math.abs(dx), Math.abs(dy) / A);          // locked to the panels' tall shape, like a photo crop
+    sel.x1 = sel.x0 + Math.sign(dx || 1) * w; sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A; drawSel();
+  }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
   window.addEventListener("mouseup", e => { if (sel && e.button === 2) stop(e); }, true);
   window.addEventListener("pointerup", e => {
@@ -169,7 +174,7 @@ function bindSky() {
     const c = sky.pix2world(cx, cy), L = sky.pix2world(l, cy), R = sky.pix2world(r_, cy), T = sky.pix2world(cx, t), B = sky.pix2world(cx, b);
     if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
     // the field is the square that covers the whole highlighted area, centred on it
-    const side = Math.max(sepDeg(L, R), sepDeg(T, B)) * 3600;
+    const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
     if (side > 5400) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`); }
     go({ key: "custom", name: "Selected area", ra: c[0], dec: c[1], pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
   }, true);
@@ -306,7 +311,7 @@ async function tryReveal() {
     const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
       Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
     const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-    wiseCanvas = await Promise.race([job, new Promise(r => setTimeout(() => r(null), 20000))]);
+    wiseCanvas = await Promise.race([job, new Promise(r => setTimeout(() => r(null), 30000))]);
   } catch (e) { wiseCanvas = null; }
   const { W, H, S, k, A, dx, dy } = geom();
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
@@ -360,6 +365,7 @@ async function unsquish() {
 /* ---------------------------------------------------------------- page two content */
 const hasPM = res => Math.hypot(res.pmra || 0, res.pmdec || 0) > 50;     // a ring only helps for real movers
 function fillPage(res) {
+  last_res = res;
   $("iName").textContent = res.name;
   const [a, b] = sexa(res.ra, res.dec);
   $("iCoord").innerHTML = `${a}<br>${b}`;
@@ -369,7 +375,55 @@ function fillPage(res) {
     `<div class="dots">${v.checks.map(c => `<span class="${c.ok ? "ok" : "no"}"><em></em>${c.k}</span>`).join("")}</div>`;
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
+  fillObjects(res);
 }
+/* "In the frame": a small picture of each object and what it is. Hover rings it in both panels. */
+let hl = null;
+function fillObjects(res) {
+  const ul = $("iObjs"); ul.innerHTML = ""; hl = null; drawHl();
+  const list = res.objects || [];
+  if (!list.length) { ul.innerHTML = `<li class="none">Nothing bright enough to list</li>`; return; }
+  list.forEach(o => {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="th"></div><div><div class="nm"></div><div class="kd"></div></div>`;
+    li.querySelector(".nm").textContent = o.name || o.kind;
+    li.querySelector(".kd").textContent = o.name ? o.kind : "Unnamed";
+    li.onmouseenter = () => { hl = o; li.classList.add("on"); drawHl(); };
+    li.onmouseleave = () => { if (hl === o) hl = null; li.classList.remove("on"); drawHl(); };
+    ul.appendChild(li);
+    const fov = Math.min(res.field_deg, Math.max(0.025, 1.5 * (o.size || 0) / 3600));
+    objThumbQ.push({ o, box: li.querySelector(".th"), fov });
+  });
+  pumpObj();
+}
+const objThumbQ = []; let objBusy = false;
+async function pumpObj() {
+  if (objBusy) return; objBusy = true;
+  while (objThumbQ.length) {
+    const { o, box, fov } = objThumbQ.shift(); if (!box.isConnected) continue;
+    try {
+      const c = await renderCutout(SURVEYS.tmass, o.ra, o.dec, fov, 88, 88, { gain: 1.3, gamma: 0.85, black: 0.03 });
+      if (box.isConnected) { box.appendChild(c); requestAnimationFrame(() => c.classList.add("ok")); }
+    } catch (e) { /* no picture: the row still reads */ }
+  }
+  objBusy = false;
+}
+function drawHl() {
+  for (const [cid, pid] of [["wiseHl", "pWise"], ["spxHl", "pSpx"]]) {
+    const cv = $(cid), f = $(pid).getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(f.width * d)) { cv.width = Math.round(f.width * d); cv.height = Math.round(f.height * d); }
+    const g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
+    const res = P || last_res; if (!hl || !res) continue;
+    const yr = cid === "wiseHl" ? (res.compare && res.compare.epoch) || 2010.5 : null;   // where the old survey saw it
+    const q = yr && (hl.pmra || hl.pmdec) ? propagate({ ra: hl.ra, dec: hl.dec, pmra: hl.pmra, pmdec: hl.pmdec, epoch: hl.epoch }, yr) : [hl.ra, hl.dec];
+    const p = toPx(res, q[0], q[1], cv.width, cv.height);
+    const r = Math.max(cv.height * 0.04, cv.height * (hl.size || 0) / 2 / (res.field_deg * 3600));
+    g.save(); g.strokeStyle = "rgba(255,255,255,.95)"; g.lineWidth = Math.max(2, cv.height / 220);
+    g.shadowColor = "rgba(0,0,0,.8)"; g.shadowBlur = 6;
+    g.beginPath(); g.arc(p[0], p[1], r, 0, Math.PI * 2); g.stroke(); g.restore();
+  }
+}
+let last_res = null;
 const SPX_PSF = 9.0, WISE_PSF = { W1: 6.1, W2: 6.4, J: 2.9, H: 2.8, K: 2.9 };   // arcsec FWHM
 function paintWise(res) {
   const cv = $("wiseCv"), f = $("pWise").getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
@@ -627,9 +681,20 @@ async function remote(q, my, have) {
 }
 
 /* ---------------------------------------------------------------- top bar */
-function openAbout() { if (busy && view !== "view") return; closeSearch(true); app.classList.add("about"); }
-function closeAbout() { app.classList.remove("about"); }
-$("aboutBtn").onclick = () => (app.classList.contains("about") ? closeAbout() : openAbout());
+let page = null;
+function openAbout(which = "how") {
+  if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
+  document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
+  document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));
+  if (which === "targets") {
+    const ul = $("tlist"); ul.innerHTML = "";
+    presetItems().forEach(p => { const li = document.createElement("li"), b = document.createElement("button");
+      b.innerHTML = `<span></span><small></small>`; b.firstChild.textContent = p.name; b.lastChild.textContent = p.kind || "";
+      b.onclick = () => { closeAbout(); choose(p); }; li.appendChild(b); ul.appendChild(li); });
+  }
+}
+function closeAbout() { page = null; app.classList.remove("about"); document.querySelectorAll("#bar .navb").forEach(b => b.classList.remove("on")); }
+document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
 function onArgs() { tryReveal(); }

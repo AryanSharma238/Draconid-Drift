@@ -1,8 +1,14 @@
+/* Proxima Nova (licensed: Adobe Fonts or Mark Simonson Studio). Put the .woff2 files in web/stage/fonts/;
+   without them the site uses Montserrat, the closest free match. */
+@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Semibold.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Bold.woff2") format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Extrabold.woff2") format("woff2");font-weight:800;font-display:swap}
 :root{
   --bg:#13161A; --bg2:#1a1e23; --line:rgba(255,255,255,.09); --ink:#e9edf2; --dim:#8b949e;
   --wine:#7A4A51; --wine-hi:#a86a73; --good:#74c69d; --warn:#e3b04b; --bad:#e07a7a; --info:#7aa7e0;
   --r:26px; --bar:90px;
-  font-family:"Archivo",system-ui,sans-serif;font-stretch:100%;--display:"Archivo",system-ui,sans-serif;
+  font-family:"Proxima Nova","Montserrat",system-ui,sans-serif;--display:"Proxima Nova","Montserrat",system-ui,sans-serif;
 }
 *{box-sizing:border-box;margin:0}
 html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased}
@@ -23,8 +29,8 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 #bar{position:absolute;left:clamp(14px,2vw,28px);right:clamp(14px,2vw,28px);top:16px;height:58px;padding:0 10px 0 24px;display:flex;align-items:center;justify-content:space-between;z-index:30;border-radius:22px;background:#7A4A51;color:rgba(255,255,255,.8);box-shadow:0 10px 30px rgba(0,0,0,.25);transition:opacity .45s ease}
 #brand{font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:.005em;padding:8px 0}
 nav{display:flex;align-items:center;gap:6px}
-#aboutBtn{font-size:15px;padding:10px 14px;color:rgba(255,255,255,.72);transition:color .2s}
-#aboutBtn:hover{color:#fff}
+#bar .navb{font-size:15px;padding:10px 14px;color:rgba(255,255,255,.72);transition:color .2s}
+#bar .navb:hover,#bar .navb.on{color:#fff}
 
 
 /* ---------- search ---------- */
@@ -152,3 +158,31 @@ nav{display:flex;align-items:center;gap:6px}
 #sky-clip{transition:opacity .9s ease}
 
 #toast{max-width:min(90vw,760px);white-space:normal;text-align:center;user-select:text}
+
+#brand,.lab h2,.big,.blk h3{font-stretch:normal}
+.lab h2{font-weight:800;letter-spacing:-.02em}
+.big{font-weight:700;letter-spacing:-.01em}
+#brand{font-weight:700;font-size:19px}
+body{font-size:15px}
+
+.panel.img canvas.hl{pointer-events:none}
+.objs{list-style:none;flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin:0;padding:0 4px 0 0;scrollbar-width:thin}
+.objs li{display:flex;align-items:center;gap:12px;padding:6px;border-radius:12px;cursor:default;transition:background .15s}
+.objs li:hover,.objs li.on{background:rgba(122,74,81,.28)}
+.objs .th{width:44px;height:44px;flex:none;border-radius:8px;overflow:hidden;background:rgba(0,0,0,.35)}
+.objs .th canvas{width:100%;height:100%;display:block;opacity:0;transition:opacity .4s}
+.objs .th canvas.ok{opacity:1}
+.objs .nm{font-size:14px;font-weight:600;line-height:1.2}
+.objs .kd{font-size:13px;color:var(--dim);line-height:1.2}
+.objs .none{color:var(--dim);font-size:14px;padding:6px}
+
+#about{overflow-y:auto;padding:120px clamp(20px,8vw,120px) 60px}
+#about .pg{display:none;max-width:680px}
+#about .pg.on{display:block}
+#about h1{font-size:34px;font-weight:700;margin-bottom:18px;color:#fff}
+#about p{font-size:17px;line-height:1.6;color:rgba(255,255,255,.78);margin-bottom:14px}
+#tlist{list-style:none;padding:0;margin-top:20px;display:flex;flex-direction:column;gap:8px}
+#tlist button{all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;padding:14px 18px;border-radius:14px;background:rgba(122,74,81,.22);font-size:17px;color:#fff}
+#tlist button:hover,#tlist button:focus-visible{background:rgba(122,74,81,.45)}
+#tlist small{display:block;color:var(--dim);font-size:14px;margin-top:2px}
+@media (max-width:760px){#bar .navb[data-page="how"],#bar .navb[data-page="data"]{display:none}}

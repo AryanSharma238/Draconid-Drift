@@ -52,7 +52,7 @@ def cached_stage(spec):
     if spec.key in PRESETS and os.path.exists(f):
         with open(f, encoding="utf-8") as fh:
             return json.load(fh)
-    res = pipeline.run(spec, mode="target", n_null=120, build=False, max_frames=120)
+    res = pipeline.run(spec, mode="target", n_null=60, build=False, max_frames=60)
     ra_now, dec_now = pipeline.propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
     return build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, MID_EPOCH,
                        ra0=spec.ra, dec0=spec.dec, epoch0=spec.epoch)

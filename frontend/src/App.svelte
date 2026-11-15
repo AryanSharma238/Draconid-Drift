@@ -1062,40 +1062,30 @@
     );
 
     let sel = null;
-    let selMoved = false;
     const stop = (e) => {
       e.stopPropagation();
       e.preventDefault();
     };
     const drawSel = () => {
+      if (!sel) return;
       const l = Math.min(sel.x0, sel.x1),
-        t = Math.min(sel.y0, sel.y1);
-      selStyle = `left:${l}px;top:${t}px;width:${Math.abs(sel.x1 - sel.x0)}px;height:${Math.abs(sel.y1 - sel.y0)}px`;
+        t = Math.min(sel.y0, sel.y1),
+        w = Math.abs(sel.x1 - sel.x0),
+        h = Math.abs(sel.y1 - sel.y0);
+      selStyle = `left:${l}px;top:${t}px;width:${w}px;height:${h}px`;
     };
-    const isRightClick = (e) => e.button === 2 || (e.button === 0 && e.ctrlKey);
 
     async function finishSelection(clientX, clientY) {
-      if (!homeOk()) return;
+      if (!homeOk() || !sel) return;
       const s0 = sel;
       sel = null;
-      selOn = false;
-      selMoved = false;
 
       const r = rect();
-      let l, r_, t, b, isClick;
-      if (s0) {
-        l = Math.min(s0.x0, s0.x1);
-        r_ = Math.max(s0.x0, s0.x1);
-        t = Math.min(s0.y0, s0.y1);
+      const l = Math.min(s0.x0, s0.x1),
+        r_ = Math.max(s0.x0, s0.x1),
+        t = Math.min(s0.y0, s0.y1),
         b = Math.max(s0.y0, s0.y1);
-        isClick = r_ - l < 8 && b - t < 8;
-      } else {
-        const x = (clientX != null ? clientX : r.left + r.width / 2) - r.left;
-        const y = (clientY != null ? clientY : r.top + r.height / 2) - r.top;
-        l = r_ = x;
-        t = b = y;
-        isClick = true;
-      }
+      const isClick = r_ - l < 4 || b - t < 4;
 
       const cx = (l + r_) / 2,
         cy = (t + b) / 2;
@@ -1104,13 +1094,14 @@
         c = sky.center();
       }
       if (!c || !isFinite(c[0]) || !isFinite(c[1])) {
-        c = [0, 0];
+        selOn = false;
+        return;
       }
 
       // Calculate angular FoV from box size, clamped to valid SPHEREx field (120" to 1800")
       let side = 300;
-      if (s0 && !isClick) {
-        const maxPx = Math.max(Math.abs(s0.x1 - s0.x0), Math.abs(s0.y1 - s0.y0));
+      if (!isClick) {
+        const maxPx = Math.max(r_ - l, b - t);
         if (maxPx > 6 && sky && sky.W) {
           side = Math.min(1800, Math.max(120, Math.round((maxPx / sky.W) * sky.fov() * 3600)));
         }
@@ -1155,13 +1146,13 @@
       });
     }
 
-    const startSel = (e) => {
-      if (!isRightClick(e)) {
+    const begin = (e) => {
+      if (e.button !== 2) {
         if (homeOk() && e.button === 0) wake();
         return;
       }
       stop(e);
-      if (!homeOk()) return;
+      if (!homeOk() || sel) return;
       wake();
       const r = rect();
       sel = {
@@ -1170,53 +1161,50 @@
         x1: e.clientX - r.left,
         y1: e.clientY - r.top,
       };
-      selMoved = false;
       drawSel();
       selOn = true;
       tipDone = true;
       tipOn = false;
     };
 
-    clipEl.addEventListener("pointerdown", startSel, true);
-    clipEl.addEventListener("mousedown", startSel, true);
+    clipEl.addEventListener("pointerdown", begin, true);
+    clipEl.addEventListener("mousedown", (e) => {
+      if (e.button === 2) stop(e);
+    }, true);
 
-    const moveSel = (e) => {
+    window.addEventListener("pointermove", (e) => {
       if (!sel) return;
       stop(e);
       const r = rect(),
         A = panelA(),
         dx = e.clientX - r.left - sel.x0,
         dy = e.clientY - r.top - sel.y0;
-      if (Math.hypot(dx, dy) > 3) selMoved = true;
       const w = Math.max(Math.abs(dx), Math.abs(dy) / A);
       sel.x1 = sel.x0 + Math.sign(dx || 1) * w;
       sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A;
       drawSel();
-    };
+    }, true);
 
-    window.addEventListener("pointermove", moveSel, true);
-    window.addEventListener("mousemove", moveSel, true);
+    window.addEventListener("mousemove", (e) => {
+      if (sel) stop(e);
+    }, true);
 
-    const endSel = (e) => {
-      if (!sel) return;
+    window.addEventListener("mouseup", (e) => {
+      if (sel && e.button === 2) stop(e);
+    }, true);
+
+    window.addEventListener("pointerup", (e) => {
+      if (!sel || e.button !== 2) return;
       stop(e);
       finishSelection(e.clientX, e.clientY);
-    };
+    }, true);
 
-    window.addEventListener("pointerup", endSel, true);
-    window.addEventListener("mouseup", endSel, true);
-
-    const onCtxMenu = (e) => {
+    clipEl.addEventListener("contextmenu", (e) => {
       stop(e);
-      if (homeOk()) {
-        finishSelection(e.clientX, e.clientY);
-      }
-    };
-
-    clipEl.addEventListener("contextmenu", onCtxMenu, true);
+    }, true);
     window.addEventListener("contextmenu", (e) => {
       if (clipEl && clipEl.contains(e.target)) {
-        onCtxMenu(e);
+        stop(e);
       }
     }, true);
   }

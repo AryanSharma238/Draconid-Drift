@@ -204,16 +204,21 @@ async function flyTo(ra, dec, fov, dur) {
   const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
   const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
   const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
-  const fA = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
+  const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
   const kA = visible ? startFrac : OFF;
-  const tA = visible ? 0 : 0.46;                     // share of the time spent turning the globe
+  const tA = visible ? 0 : 0.5;                     // share of the time spent turning the globe
+    const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));   // wide enough to see where we are going
+  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));    // phase 1 ends halfway (in zoom) between the wide view and the target
   const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
   await tween(dur, t => {
-    if (t < tA) {                                    // phase 1: turn, zoom a little, target always inside the view
-      const q = t / tA, p = q * q * q * (q * (q * 6 - 15) + 10), c = radec(slerp(u0, uA, p));   // smootherstep: no jerk at either end
-      const d = Math.hypot(...offsetOf(c, T));
-      const f = Math.max(Math.exp(Math.log(f0) + (Math.log(fA) - Math.log(f0)) * p), d * 3.4);
-      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));        // zooms out as far as needed to keep the target in view
+    if (t < tA) {                                    // phase 1: ease out to a wide view, turn, then come back in
+      const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
+      const p = ss(clamp01((q - 0.12) / 0.88)), c = radec(slerp(u0, uA, p));          // the globe starts turning just after the zoom-out begins
+      const out = ss(clamp01(q / 0.45));                                               // ~1.7 s to widen, not a jump
+      const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
+      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.45) / 0.55)));
+      const f = q < 0.45 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
+      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
     } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
       const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
       const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);

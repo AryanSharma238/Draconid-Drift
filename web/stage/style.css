@@ -301,3 +301,30 @@ body{font-size:15px}
 #info .head{position:relative}
 #timeBtn{margin-top:12px;padding:7px 14px;font-size:13px}
 #pSpx .modes{display:none}
+
+/* ---- past & future: 3D depth view replaces the two image panels; time slider replaces the wavelength bar */
+#pDepth{display:none;position:relative;overflow:hidden;padding:0;background:#0b0d10}
+#app.deep #pDepth{display:block;grid-column:1/span 2;grid-row:1;opacity:1;transform:none;height:100%;aspect-ratio:auto}
+#app.deep #pWise,#app.deep #pSpx{display:none}
+#depthCv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+#depthCv:active{cursor:grabbing}
+#rulerCv{position:absolute;left:12px;top:0;width:120px;pointer-events:none}
+#pDepth .lab{left:120px}
+#depthTip{position:absolute;z-index:3;pointer-events:none;padding:8px 12px;border-radius:10px;background:rgba(13,15,18,.85);border:1px solid rgba(255,255,255,.15);opacity:0;transition:opacity .15s;max-width:260px}
+#depthTip.on{opacity:1}
+#depthTip b{display:block;font-size:14px}
+#depthTip span{font-size:12.5px;color:var(--dim)}
+#pDepth .dlegend{position:absolute;right:20px;bottom:16px;z-index:2;display:flex;gap:14px;font-size:12.5px;color:rgba(255,255,255,.75)}
+#pDepth .dlegend span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+#pDepth .dlegend .st::before{background:#ffe2be}#pDepth .dlegend .ga::before{background:#be96ff}#pDepth .dlegend .qs::before{background:#78c8ff}
+#pDepth .dlegend .hint{color:var(--dim)}#pDepth .dlegend .hint::before{display:none}
+#depthWait{position:absolute;inset:0;display:none;place-items:center;color:var(--dim);font-size:15px;z-index:2}
+#depthWait.on{display:grid}
+#timeBtn[aria-pressed=true]{background:#7A4A51;border-color:#7A4A51}
+#timebar{display:none;flex:1;align-items:center;gap:14px;flex-wrap:nowrap;position:relative}
+#app.deep #timebar{display:flex}
+#app.deep #wave,#app.deep #waveLab{display:none}
+#timebar .end{font-size:12.5px;color:var(--dim);white-space:nowrap}
+#tslider{flex:1;accent-color:#a86a73;height:24px;cursor:pointer}
+#tLab{position:absolute;left:0;right:0;bottom:calc(100% + 14px);text-align:center;font-size:14px;color:rgba(255,255,255,.85);pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.8)}
+#tLab b{color:#e8be8c}

@@ -129,6 +129,24 @@ def compute_bands(name, ra_c, dec_c, field_deg, det, targets):
     return all_bands(spec, targets=targets)
 
 
+@st.cache_data(show_spinner=False, max_entries=32, ttl=3600)
+def cached_depth(ra_c, dec_c, field_deg):
+    from drift.depth import depth_map
+    return depth_map(ra_c, dec_c, field_deg)
+
+
+if req and req.get("nonce") != S.seen and req.get("type") == "depth":
+    S.seen = req["nonce"]
+    r = S.result
+    if r and r.get("nonce") == req.get("for") and "depth" not in r:
+        try:
+            S.result = dict(r, depth=cached_depth(round(float(r["ra_c"]), 5), round(float(r["dec_c"]), 5), round(float(r["field_deg"]), 5)))
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            S.result = dict(r, depth=dict(objects=[], error="The distance catalogues did not answer. Try again in a moment."))
+    st.rerun()
+
 if req and req.get("nonce") != S.seen and req.get("type") == "bands":
     S.seen = req["nonce"]
     r = S.result

@@ -1,6 +1,7 @@
 import { Sky, unit, radec, slerp } from "./sky.js";
 import { renderCutout, SURVEYS } from "./healpix.js";
 import * as intro from "./intro.js";
+import * as depth from "./depth.js";
 
 /* ---------------------------------------------------------------- Streamlit bridge */
 const send = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
@@ -270,6 +271,7 @@ function makeOverlay() {
 
 async function go(item) {
   if (busy && view !== "view") return;
+  if (app.classList.contains("deep")) exitDepth();
   closeSearch(true); closeAbout();
   if (view === "view") {                           // from the three panels: dim them away, the sky fades in behind, then fly on
     busy = true; stopPlayer(); setView("leaving");
@@ -397,6 +399,7 @@ function abortHome() { busy = false; req = null; leave(true); }
 
 async function leave(fromError = false) {
   if (busy && !fromError && view !== "view" && view !== "waiting") return;
+  if (app.classList.contains("deep")) exitDepth();
   stopPlayer();
   const was = view;
   emit({ type: "home", nonce: "h" + Date.now() });
@@ -911,8 +914,35 @@ $("demoBtn").onclick = () => {
   intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
 };
 
+/* ---------------------------------------------------------------- past & future: the 3D depth view */
+let depthOpen = false;
+function enterDepth() {
+  if (!last_res) return;
+  app.classList.add("deep"); $("timeBtn").textContent = "Back to images"; $("timeBtn").setAttribute("aria-pressed", "true");
+  $("tslider").value = 0; $("tLab").innerHTML = depth.timeLabel(0);
+  if (last_res.depth) showDepth(last_res);
+  else { $("depthWait").classList.add("on"); emit({ type: "depth", nonce: "d" + Date.now(), for: last_res.nonce }); }
+}
+function exitDepth() {
+  app.classList.remove("deep"); depth.close(); depthOpen = false;
+  $("timeBtn").textContent = "Past & future"; $("timeBtn").setAttribute("aria-pressed", "false");
+  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase]; preparePlayer(P); [tpos, P.curDates, P.curBase] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
+}
+async function showDepth(res) {
+  last_res.depth = res.depth;
+  const d = res.depth, n = (d.objects || []).length;
+  $("depthCap").textContent = d.error ? d.error : n ? `${n.toLocaleString()} objects with a measured distance, within ${Math.round(d.radius_deg * 60)}′ of the centre`
+    : "Nothing here has a measured distance yet";
+  $("depthWait").classList.remove("on");
+  if (!app.classList.contains("deep")) return;
+  await depth.open($("pDepth"), d, last_res); depthOpen = true;
+}
+$("timeBtn").onclick = () => (app.classList.contains("deep") ? exitDepth() : enterDepth());
+$("tslider").addEventListener("input", e => { const t = depth.sliderYears(+e.target.value); depth.setTime(t); $("tLab").innerHTML = depth.timeLabel(t, last_res && last_res.depth, last_res); });
+
 function onArgs() {
   if (args.result) leaveLanding();
+  if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.depth && !depthOpen && app.classList.contains("deep")) showDepth(args.result);
   if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.bands && !last_res.bands) onBands(args.result);
   tryReveal();
 }   // a deep link or a result already loaded: no landing screen

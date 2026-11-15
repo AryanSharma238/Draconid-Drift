@@ -36,10 +36,18 @@ _read_pool: ProcessPoolExecutor | ThreadPoolExecutor | None = None
 _sem: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
 
 
+def _use_threads() -> bool:
+    """Processes only on the EC2 backend server. Inside the Streamlit app (Streamlit Cloud, laptops) worker
+    processes re-import the whole app on start-up and each holds its own copy of numpy/astropy: dozens of them
+    run the 1 GB Streamlit Cloud machine out of memory and the app dies ("Oh no. Error running app")."""
+    import os
+    return sys.platform == "darwin" or "streamlit" in sys.modules or os.environ.get("DRIFT_THREADS") == "1"
+
+
 def _get_pool() -> ProcessPoolExecutor | ThreadPoolExecutor:
     global _pool
     if _pool is None:
-        if sys.platform == "darwin":
+        if _use_threads():
             _pool = ThreadPoolExecutor(max_workers=config.PROCESS_WORKERS * 2)
         else:
             _pool = ProcessPoolExecutor(max_workers=config.PROCESS_WORKERS)
@@ -50,7 +58,7 @@ def _get_read_pool() -> ProcessPoolExecutor | ThreadPoolExecutor:
     """S3 reads in processes on Linux (EC2), threads on macOS (avoids macOS fork/spawn crash in Streamlit)."""
     global _read_pool
     if _read_pool is None:
-        if sys.platform == "darwin":
+        if _use_threads():
             _read_pool = ThreadPoolExecutor(max_workers=config.S3_READ_WORKERS * 2)
         else:
             _read_pool = ProcessPoolExecutor(max_workers=config.S3_READ_WORKERS)

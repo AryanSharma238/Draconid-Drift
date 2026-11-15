@@ -146,3 +146,7 @@ nav{display:flex;align-items:center;gap:6px}
 #sky{transition:opacity .5s}
 #app[data-view=waiting] #sky,#app[data-view=settling] #sky{opacity:0}
 #fw{transition:opacity .5s}
+
+/* leaving the panels for a new search: they dim out over the sky */
+#app.dimming .panel,#app.dimming #foot{transition:opacity .8s ease,transform .8s ease!important;transition-delay:0s!important}
+#sky-clip{transition:opacity .9s ease}

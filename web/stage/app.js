@@ -206,11 +206,11 @@ async function flyTo(ra, dec, fov, dur) {
   const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
   const fA = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
   const kA = visible ? startFrac : OFF;
-  const tA = visible ? 0 : 0.38;                     // share of the time spent turning the globe
+  const tA = visible ? 0 : 0.46;                     // share of the time spent turning the globe
   const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
   await tween(dur, t => {
     if (t < tA) {                                    // phase 1: turn, zoom a little, target always inside the view
-      const p = smooth(t / tA), c = radec(slerp(u0, uA, p));
+      const q = t / tA, p = q * q * q * (q * (q * 6 - 15) + 10), c = radec(slerp(u0, uA, p));   // smootherstep: no jerk at either end
       const d = Math.hypot(...offsetOf(c, T));
       const f = Math.max(Math.exp(Math.log(f0) + (Math.log(fA) - Math.log(f0)) * p), d * 3.4);
       sky.set(c[0], c[1], Math.min(f, sky.homeFov()));        // zooms out as far as needed to keep the target in view
@@ -241,10 +241,17 @@ function makeOverlay() {
 async function go(item) {
   if (busy && view !== "view") return;
   closeSearch(true); closeAbout();
-  if (view === "view") {                           // from the three panels: fold back to the sky, then fly on to the next target
-    busy = true; stopPlayer(); setView("leaving"); app.classList.remove("shown");
-    await unsquish();
-    if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
+  if (view === "view") {                           // from the three panels: dim them away, the sky fades in behind, then fly on
+    busy = true; stopPlayer(); setView("leaving");
+    clip.style.transition = "none"; clip.style.opacity = "0";
+    clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
+    app.classList.add("dimming");
+    await new Promise(r => setTimeout(r, 30));
+    clip.style.transition = "opacity .9s ease"; clip.style.opacity = "1";       // the sky where we are, full screen, under the fading panels
+    app.classList.remove("shown");
+    await new Promise(r => setTimeout(r, 950));
+    app.classList.remove("dimming"); clip.style.transition = "";
+    if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .6s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 700); }
     sky.grid(true);
   }
   for (const id of ["wiseCv", "spxCv"]) { const c = $(id); c.getContext("2d").clearRect(0, 0, c.width, c.height); }   // no leftovers from the last target
@@ -271,7 +278,7 @@ async function go(item) {
   req.wiseJob = { survey: cmpI.survey, pw, ph };
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 6500);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 7500);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }

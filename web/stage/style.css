@@ -203,7 +203,7 @@ body{font-size:15px}
 #exploreBtn{background:transparent;color:#fff;border:2px solid #b07a83}
 #exploreBtn:hover{background:rgba(122,74,81,.25)}
 #land button:focus-visible{outline:2px solid #fff;outline-offset:3px}
-#app.landing #bar{opacity:0!important;pointer-events:none}
+#app.landing #bar{z-index:40}
 #app:not(.landing) #land{opacity:0;pointer-events:none}
 
 /* the Demo intro */
@@ -287,3 +287,10 @@ body{font-size:15px}
 #info .spec{height:140px;position:relative}
 #info .spec .specnote{position:absolute;left:0;bottom:0}
 #info .spec svg{height:118px}
+
+#land{gap:0}
+#land h1{font-size:clamp(40px,6.2vw,92px);font-weight:800;letter-spacing:-.025em;line-height:1.02;max-width:14ch}
+#land .brand{margin-top:28px;font-size:clamp(17px,1.5vw,21px);font-weight:700;letter-spacing:.01em;color:#c99aa2}
+#land .sub{margin-top:6px;font-size:clamp(16px,1.4vw,20px);color:rgba(255,255,255,.82)}
+#land .cta{margin-top:30px}
+#land .sub{max-width:none;white-space:nowrap}

@@ -754,6 +754,7 @@ let items = [], sel = -1, qid = 0;
 const thumbCache = new Map(), thumbQ = [];
 let thumbBusy = false;
 function openSearch() {
+  leaveLanding();
   if (view !== "home" && view !== "view") return;
   loadCatalog(); closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
   tipEl.classList.remove("on"); showItems(presetItems()); setTimeout(() => qEl.focus(), 120);
@@ -886,6 +887,7 @@ async function remote(q, my, have) {
 /* ---------------------------------------------------------------- top bar */
 let page = null;
 function openAbout(which = "how") {
+  leaveLanding();
   if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
   document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
   document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));

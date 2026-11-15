@@ -489,7 +489,10 @@ function showItems(list) {
   });
 }
 function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
-function choose(it) { go(Object.assign({ fov: 180, epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it)); }
+function choose(it) {
+  const fov = it.key !== "custom" ? it.fov : Math.min(5400, Math.max(300, 1.3 * 60 * (it.size || 0)));
+  go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { fov: fov || 300 }));
+}
 
 function thumb(it, box) {
   const key = it.key + "|" + it.name;
@@ -534,13 +537,13 @@ const FAMOUS = [
   ["Alpha Centauri", 219.902066, -60.833975, -3679.25, 473.67, "Nearest star system"], ["Proxima Centauri", 217.428953, -62.679484, -3781.74, 769.47, "Nearest star"],
   ["TON 618", 187.104025, 31.477119, 0, 0, "Quasar"], ["Betelgeuse", 88.792939, 7.407064, 27.54, 11.30, "Red supergiant"],
   ["Vega", 279.234735, 38.783689, 200.94, 286.23, "Star"], ["Rigel", 78.634467, -8.201638, 1.31, 0.50, "Blue supergiant"],
-  ["Arcturus", 213.915300, 19.182409, -1093.39, -2000.06, "Red giant"], ["Andromeda Galaxy", 10.684708, 41.268750, 0, 0, "Galaxy"],
-  ["Orion Nebula", 83.822083, -5.391111, 0, 0, "Nebula"], ["Sagittarius A*", 266.416837, -29.007810, 0, 0, "Galactic centre"],
-  ["Eta Carinae", 161.264775, -59.684431, -7.6, 1.0, "Massive star"], ["Crab Nebula", 83.633083, 22.014500, 0, 0, "Supernova remnant"],
-  ["3C 273", 187.277915, 2.052388, 0, 0, "Quasar"], ["Pleiades", 56.75, 24.116667, 19.997, -45.548, "Star cluster"],
+  ["Arcturus", 213.915300, 19.182409, -1093.39, -2000.06, "Red giant"], ["Andromeda Galaxy", 10.684708, 41.268750, 0, 0, "Galaxy", 190],
+  ["Orion Nebula", 83.822083, -5.391111, 0, 0, "Nebula", 66], ["Sagittarius A*", 266.416837, -29.007810, 0, 0, "Galactic centre"],
+  ["Eta Carinae", 161.264775, -59.684431, -7.6, 1.0, "Massive star"], ["Crab Nebula", 83.633083, 22.014500, 0, 0, "Supernova remnant", 7],
+  ["3C 273", 187.277915, 2.052388, 0, 0, "Quasar"], ["Pleiades", 56.75, 24.116667, 0, 0, "Star cluster", 110],
   ["Kapteyn's Star", 77.919, -45.018, 6505, -5731, "Fast-moving star"], ["61 Cygni", 316.725, 38.749, 4164, 3250, "Fast-moving pair"],
   ["Groombridge 1830", 178.245, 37.719, 4003, -5813, "Fast-moving star"], ["Wolf 359", 164.120, 7.015, -3842, -2725, "Nearby red dwarf"],
-].map(([name, ra, dec, pmra, pmdec, kind]) => ({ key: "custom", name, ra, dec, pmra, pmdec, epoch: 2000, kind }));
+].map(([name, ra, dec, pmra, pmdec, kind, size]) => ({ key: "custom", name, ra, dec, pmra, pmdec, epoch: 2000, kind, size: size || 0 }));
 function famous(q) { const s = q.toLowerCase(); return FAMOUS.filter(f => f.name.toLowerCase().includes(s)); }
 const timed = (url, ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(), ms); return fetch(url, { signal: c.signal }).finally(() => clearTimeout(t)); };
 function parseSesame(t, q) {
@@ -550,9 +553,9 @@ function parseSesame(t, q) {
 async function remote(q, my, have) {
   const cap = q[0].toUpperCase() + q.slice(1), vars = [...new Set([q, cap, q.toUpperCase()])];
   const like = vars.flatMap(v => [`'${esc(v)}%'`, `'NAME ${esc(v)}%'`, `'* ${esc(v)}%'`, `'V* ${esc(v)}%'`]).map(p => `id LIKE ${p}`).join(" OR ");
-  const adql = `SELECT TOP 8 main_id, ra, dec, pmra, pmdec, otype FROM basic JOIN ident ON oid = oidref WHERE ${like}`;
+  const adql = `SELECT TOP 8 main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis FROM basic JOIN ident ON oid = oidref WHERE ${like}`;
   const simbad = timed("https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 6000)
-    .then(r => r.json()).then(j => (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "" })))
+    .then(r => r.json()).then(j => (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "", size: x[6] || 0 })))
     .catch(() => []);
   const mirrors = ["https://cds.unistra.fr/cgi-bin/nph-sesame/-oI/SNV?", "https://vizier.cfa.harvard.edu/viz-bin/nph-sesame/-oI/SNV?", "https://vizier.idia.ac.za/viz-bin/nph-sesame/-oI/SNV?"];
   const sesame = Promise.any(mirrors.map(m => timed(m + encodeURIComponent(q), 6000).then(r => r.text()).then(t => { const o = parseSesame(t, q); if (!o.length) throw 0; return o; }))).catch(() => []);

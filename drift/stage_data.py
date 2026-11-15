@@ -42,7 +42,7 @@ def classify(v):
 
 
 _WORDS = {"UNRELIABLE": ("Unreliable here", "bad"), "NOISE": ("Nothing stands out", "dim"),
-          "STAR": ("Star, not moving", "info"), "MOVER?": ("Moving, unconfirmed", "warn"),
+          "STAR": ("Not moving", "info"), "MOVER?": ("Moving, unconfirmed", "warn"),
           "MOVER": ("Moving object", "good"), "SOURCE": ("Source, motion unclear", "warn")}
 
 

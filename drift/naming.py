@@ -18,7 +18,7 @@ import io
 
 import numpy as np
 
-MIRRORS = ("https://simbad.harvard.edu/simbad/sim-tap/sync", "https://simbad.cds.unistra.fr/simbad/sim-tap/sync")
+MIRRORS = ("https://simbad.cfa.harvard.edu/simbad/sim-tap/sync", "https://simbad.harvard.edu/simbad/sim-tap/sync")
 EXTENDED = ("G", "GiG", "GiP", "GiC", "AGN", "Sy1", "Sy2", "SyG", "SBG", "LIN", "QSO", "BLL", "rG", "H2G", "EmG", "IG",
             "PaG", "GrG", "ClG", "PN", "HII", "SNR", "Cl*", "OpC", "GlC", "As*", "ISM", "MoC", "RNe", "DNe", "Neb", "bub", "SFR",
             "cor", "Cld", "GNe", "BNe")

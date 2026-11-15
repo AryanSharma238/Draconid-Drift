@@ -7,7 +7,7 @@ from .movers import deep_stack
 from .naming import _tap, _clean, _readable, _nice_names, EXTENDED
 
 SPX_ARCSEC = 6.15
-MATCH_ARCSEC = 6.0
+MATCH_ARCSEC = 14.0
 BRIGHT_FRAC = 0.6          # unnamed sources at least this bright relative to the brightest are classified
 MAX_ITEMS = 10
 

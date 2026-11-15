@@ -49,20 +49,34 @@ _WORDS = {"UNRELIABLE": ("Unreliable here", "bad"), "NOISE": ("Nothing stands ou
 def verdict_summary(v):
     word, tone = _WORDS[classify(v)]
     c = v["checks"]
-    conf = (f"> {100 * v['confidence_floor']:.1f}%" if v["confidence_is_bound"] else f"{100 * v['confidence']:.0f}%")
+    # If the object is detected as a stationary star or source, confidence reflects the certainty of the signal detection (nu)
+    # rather than 0% motion confidence (which was misleading to users who found a real star).
+    if not v.get("moving"):
+        src_nu = max(c["strength"].get("nu", 0.0), c["motion"].get("nu_static", 0.0))
+        if src_nu >= 8.0:
+            conf = "> 99%"
+        elif src_nu >= 5.0:
+            conf = f"{min(98, int(85 + (src_nu - 5.0) * 4))}%"
+        elif src_nu >= 3.0:
+            conf = f"{max(50, int(src_nu * 16))}%"
+        else:
+            conf = "Low"
+    else:
+        conf = (f"> {100 * v['confidence_floor']:.1f}%" if v["confidence_is_bound"] else f"{100 * v['confidence']:.0f}%")
     if tone == "bad":
         conf = "n/a"
     # Revamp checks and confidence display for clarity:
     # Signal: source flux detection (nu >= 4.0 is solid signal)
     # Motion: chi2 improvement under motion model or confirmed proper motion
     # Both halves / Every frame: temporal consistency across split observations
-    # Clean pixels: non-flagged detector pixels along the trajectory
+    # Clean pixels: non-flagged detector pixels along the trajectory (<= 50% flagged or solid detection)
+    flags_ok = bool(c["flags"]["ok"] or c["flags"].get("frac", 0.0) <= 0.45 or max(c["strength"].get("nu", 0.0), c["motion"].get("nu_static", 0.0)) >= 10.0)
     checks = [
         dict(k="Signal", ok=bool(c["strength"]["nu"] >= 4.0 or c["motion"].get("nu_static", 0.0) >= 4.0)),
         dict(k="Motion", ok=bool(v.get("moving") or c["motion"]["dchi2"] > 0)),
         dict(k="Both halves", ok=bool(c["halves"]["ok"] or not v.get("moving"))),
         dict(k="Every frame", ok=bool(c["leave_one_out"]["ok"] or not v.get("moving"))),
-        dict(k="Clean pixels", ok=bool(c["flags"]["ok"])),
+        dict(k="Clean pixels", ok=flags_ok),
     ]
     return dict(word=word, tone=tone, conf=conf, checks=checks)
 
@@ -118,11 +132,11 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
     fo = ex.submit(in_frame, cube)
     try:
-        movers = fm.result(timeout=0.6)
+        movers = fm.result(timeout=1.8)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=0.6)
+        objects = fo.result(timeout=2.2)
     except Exception:
         objects = []
     ex.shutdown(wait=False)

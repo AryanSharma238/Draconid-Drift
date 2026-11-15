@@ -233,14 +233,15 @@ function bindSky() {
  clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  // Right-click drag: draw a smooth circular selection area that stretches insensitively
+  // Right-click drag: draw a smooth circular selection area where the anchor point is the top-left of the circle
   let sel = null;
   const stop = e => { e.stopPropagation(); e.preventDefault(); };
   const begin = e => {
     if (e.button !== 2) { if (homeOk() && e.button === 0) wake(); return; }
     stop(e); if (!homeOk() || sel) return;
     wake(); const r = rect();
-    sel = { cx: e.clientX - r.left, cy: e.clientY - r.top, r: 0 };
+    const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
+    sel = { x0, y0, cx: x0, cy: y0, r: 0 };
     drawSel(); selEl.classList.remove("fading"); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
   };
   clip.addEventListener("pointerdown", begin, true);
@@ -260,12 +261,18 @@ function bindSky() {
   window.addEventListener("pointermove", e => {
     if (!sel) return; stop(e);
     const r = rect();
-    const dx = e.clientX - r.left - sel.cx;
-    const dy = e.clientY - r.top - sel.cy;
-    const rawDist = Math.hypot(dx, dy);
-    // Insensitive smooth stretching: dampened with exponent 0.85 and deadzone
-    const effectiveR = rawDist < 8 ? rawDist * 0.5 : 4 + Math.pow(rawDist - 8, 0.88) * 1.25;
-    sel.r = Math.max(12, Math.min(Math.min(sky.W, sky.H) * 0.45, effectiveR));
+    const currX = e.clientX - r.left, currY = e.clientY - r.top;
+    const dx = currX - sel.x0, dy = currY - sel.y0;
+    const sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
+    const rawDist = Math.max(Math.abs(dx), Math.abs(dy));
+    // Insensitive smooth stretching: dampened with exponent 0.90
+    const effectiveD = rawDist < 6 ? rawDist * 0.5 : 8 + Math.pow(Math.max(0, rawDist - 6), 0.90) * 1.15;
+    const D = Math.max(16, Math.min(Math.min(sky.W, sky.H) * 0.9, effectiveD));
+    const xLeft = sx > 0 ? sel.x0 : sel.x0 - D;
+    const yTop = sy > 0 ? sel.y0 : sel.y0 - D;
+    sel.cx = xLeft + D / 2;
+    sel.cy = yTop + D / 2;
+    sel.r = D / 2;
     drawSel();
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);

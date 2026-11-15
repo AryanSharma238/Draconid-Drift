@@ -54,11 +54,10 @@
       <div class="speed" role="group" aria-label="Playback speed">
         <button type="button" data-s="0.5">0.5×</button><button type="button" data-s="1" class="on">1×</button><button type="button" data-s="2">2×</button>
       </div></section>
-    <section class="panel" id="pDepth" aria-label="3D map of this patch of sky">
-      <canvas id="depthCv"></canvas><canvas id="rulerCv" aria-hidden="true"></canvas>
-      <div class="lab"><h2>In depth</h2><p id="depthCap">Everything here with a measured distance</p></div>
+    <section class="panel" id="pDepth" aria-label="3D map of this patch of sky: distance and time">
+      <canvas id="depthCv"></canvas><div id="depthTags" aria-hidden="true"></div><canvas id="rulerCv" aria-hidden="true"></canvas>
+      <div class="lab"><h2>Distance &amp; time</h2><p id="depthCap"></p><p id="tLab"></p></div>
       <div id="depthTip" role="status"></div>
-      <div class="dlegend"><span class="st">Star</span><span class="ga">Galaxy</span><span class="qs">Quasar</span><span class="hint">Drag to turn · scroll to fly</span></div>
       <div id="depthWait">Placing every star and galaxy at its distance…</div>
     </section>
     <aside class="panel" id="info">
@@ -78,10 +77,7 @@
     </div>
     <p id="waveLab"></p>
     <div id="timebar">
-      <span class="end">13.8 billion years ago</span>
-      <input id="tslider" type="range" min="-1000" max="1000" step="1" value="0" aria-label="Time: past to future">
-      <span class="end">100,000 years ahead</span>
-      <p id="tLab"></p>
+      <div class="tw"><input id="tslider" type="range" min="-1000" max="1000" step="1" value="0" aria-label="Time, from 13.8 billion years ago to 100,000 years ahead"><div id="tticks" aria-hidden="true"></div></div>
     </div>
   </footer>
 

@@ -308,23 +308,38 @@ body{font-size:15px}
 #app.deep #pWise,#app.deep #pSpx{display:none}
 #depthCv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
 #depthCv:active{cursor:grabbing}
-#rulerCv{position:absolute;left:12px;top:0;width:120px;pointer-events:none}
-#pDepth .lab{left:120px}
 #depthTip{position:absolute;z-index:3;pointer-events:none;padding:8px 12px;border-radius:10px;background:rgba(13,15,18,.85);border:1px solid rgba(255,255,255,.15);opacity:0;transition:opacity .15s;max-width:260px}
 #depthTip.on{opacity:1}
 #depthTip b{display:block;font-size:14px}
 #depthTip span{font-size:12.5px;color:var(--dim)}
-#pDepth .dlegend{position:absolute;right:20px;bottom:16px;z-index:2;display:flex;gap:14px;font-size:12.5px;color:rgba(255,255,255,.75)}
-#pDepth .dlegend span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
-#pDepth .dlegend .st::before{background:#ffe2be}#pDepth .dlegend .ga::before{background:#be96ff}#pDepth .dlegend .qs::before{background:#78c8ff}
-#pDepth .dlegend .hint{color:var(--dim)}#pDepth .dlegend .hint::before{display:none}
 #depthWait{position:absolute;inset:0;display:none;place-items:center;color:var(--dim);font-size:15px;z-index:2}
 #depthWait.on{display:grid}
 #timeBtn[aria-pressed=true]{background:#7A4A51;border-color:#7A4A51}
 #timebar{display:none;flex:1;align-items:center;gap:14px;flex-wrap:nowrap;position:relative}
 #app.deep #timebar{display:flex}
 #app.deep #wave,#app.deep #waveLab{display:none}
-#timebar .end{font-size:12.5px;color:var(--dim);white-space:nowrap}
-#tslider{flex:1;accent-color:#a86a73;height:24px;cursor:pointer}
-#tLab{position:absolute;left:0;right:0;bottom:calc(100% + 14px);text-align:center;font-size:14px;color:rgba(255,255,255,.85);pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.8)}
-#tLab b{color:#e8be8c}
+
+
+#pDepth{user-select:none;-webkit-user-select:none}
+#depthCv{outline:none;-webkit-tap-highlight-color:transparent}
+#rulerCv{position:absolute;left:0;right:0;bottom:6px;width:100%;height:46px;pointer-events:none;z-index:2}
+#pDepth .lab{pointer-events:none}
+#depthCap{margin-top:8px!important}
+#tLab{margin-top:4px!important;font-size:clamp(14px,1.15vw,17px)!important;color:#e8be8c!important;min-height:1.3em}
+#depthTags{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
+.dtag{position:absolute;left:0;top:0;display:none;padding:3px 8px;border-left:2px solid rgba(255,255,255,.5);background:rgba(11,13,16,.55);white-space:nowrap;line-height:1.2}
+.dtag b{display:block;font-size:12.5px;font-weight:600;color:#fff}
+.dtag span{display:block;font-size:11px;color:var(--dim)}
+.dtag.tgt{border-left-color:#e8be8c}.dtag.tgt b{color:#e8be8c}
+.dtag.earth{border-left-color:#5b8fd9}
+#timebar .tw{position:relative;flex:1;height:44px;padding-top:2px}
+#tslider{width:100%;margin:0}
+#tticks{position:absolute;left:8px;right:8px;top:26px;height:16px}
+#tticks i{position:absolute;top:0;width:1px;height:6px;background:rgba(255,255,255,.45)}
+#tticks i.now{height:10px;width:2px;background:#e8be8c;margin-left:-.5px}
+#tticks em{position:absolute;top:6px;transform:translateX(-50%);font-style:normal;font-size:10.5px;color:var(--dim);white-space:nowrap}
+#tticks em.now{color:#e8be8c;font-weight:600}
+#tticks em.l{transform:none}#tticks em.r{transform:translateX(-100%)}
+#app.deep #foot{height:58px}
+
+#tslider{accent-color:#a86a73}

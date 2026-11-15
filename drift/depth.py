@@ -45,7 +45,8 @@ def _gaia(ra, dec, r_deg, timeout=5.0):
 
 def _simbad(ra, dec, r_deg):
     from .naming import _tap
-    cols = "oid, main_id, otype, sp_type, ra, dec, plx_value, rvz_redshift, rvz_radvel, pmra, pmdec, nbref"
+    cols = ("oid, main_id, otype, sp_type, ra, dec, plx_value, rvz_redshift, rvz_radvel, pmra, pmdec, nbref, "
+            "galdim_majaxis AS majax, galdim_minaxis AS minax, galdim_angle AS pa")
     return _tap(f"SELECT TOP 3000 {cols} FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},"
                 f"{dec:.6f},{r_deg:.6f})) AND (plx_value > 0.05 OR rvz_redshift > 0.0003)", 8.0) or []
 
@@ -111,7 +112,9 @@ def depth_map(ra_c, dec_c, field_deg, target_name=None):
             v = [4.74047 * pmra / 1000 * pc, 4.74047 * pmdec / 1000 * pc, rv]
             cls = "star"
         x, y = _offset(ra, dec, ra_c, dec_c)
-        add(dict(name=_readable(_clean(str(r.get("main_id", "")))), kind=kind, cls=cls, ra=ra, dec=dec, x=round(x, 5),
+        maj, mnr, pa = _num(r.get("majax")), _num(r.get("minax")), _num(r.get("pa"))
+        add(dict(size=round(maj, 3) if maj else None, ratio=round(mnr / maj, 3) if maj and mnr else None,
+                 pa=pa, name=_readable(_clean(str(r.get("main_id", "")))), kind=kind, cls=cls, ra=ra, dec=dec, x=round(x, 5),
                  y=round(y, 5), ly=float(ly), z=z if galaxy else None, v=[round(c, 3) for c in v],
                  nb=int(r.get("nbref") or 0)))
     # Gaia fills in every other star with a good parallax

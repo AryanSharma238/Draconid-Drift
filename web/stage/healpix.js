@@ -38,7 +38,8 @@ function loadTile(base, order, idx, slice = null, fmt = "jpg") {
       const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(im, 0, 0);
       res({ w: c.width, h: c.height, d: g.getImageData(0, 0, c.width, c.height).data });
     };
-    im.onerror = () => res(null);
+    let tries = 0;
+    im.onerror = () => { if (++tries < 3) setTimeout(() => { im.src = im.src.split('?')[0] + '?r=' + tries; }, 400 * tries); else { tileCache.delete(key); res(null); } };
     im.src = `${base}/Norder${order}/Dir${dir}/Npix${idx}${slice ? "_" + slice : ""}.${fmt}`;
   });
   tileCache.set(key, p);
@@ -123,6 +124,7 @@ export async function renderCutout(survey, ra, dec, fovDeg, w, h, tweak = {}, op
 export const SURVEYS = {
   wise: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1", order: 8 },
   tmass: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color", order: 9 },
+  tmass8: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color", order: 8 },
   w1: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order: 8 },
   w2: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order: 8 },
   spherex: slice => ({ url: "https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube", order: 5, slice, fmt: "png" }),

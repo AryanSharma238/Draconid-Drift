@@ -169,14 +169,17 @@ function bindSky() {
 /* ---------------------------------------------------------------- flight */
 const panelA = () => { const r = $("pSpx").getBoundingClientRect(); return r.width ? r.height / r.width : 1.4; };
 // width of the field on screen at the end of the flight; the panel window (width x width*a) must fit inside the viewport
+const ENDFOV = () => req.fieldDeg * sky.W / (SF() * panelA());   // sky width so the field spans the panel's height
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
 async function flyTo(ra, dec, fov, dur, { zoomLag = 0, panEnd = 1 } = {}) {
-  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec), f0 = Math.log(sky.fov()), f1 = Math.log(fov);
+  const c0 = sky.center(), dra = ((ra - c0[0] + 540) % 360) - 180, f0 = Math.log(sky.fov()), f1 = Math.log(fov);
   await tween(dur, t => {
-    const pc = flightEase(t / panEnd), pz = zoomEase(clamp01((t - zoomLag) / (1 - zoomLag)));
-    const [r, d] = radec(slerp(u0, u1, pc));
+    const pz = zoomEase(clamp01((t - zoomLag) / (1 - zoomLag)));
+    // half a parabola: steady sideways motion, the drop grows toward the end
+    const px = smooth(clamp01(t / panEnd)), py = Math.pow(clamp01(t / panEnd), 1.7) * (1.7 - 0.7 * clamp01(t / panEnd)) ;
+    const r = c0[0] + dra * px, d = c0[1] + (dec - c0[1]) * Math.min(1, py);
     sky.set(r, d, Math.exp(f0 + (f1 - f0) * pz));
     if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.86) / 0.14)));
   });
@@ -203,16 +206,16 @@ async function go(item) {
   const my = req.nonce, det = item.detector || "SPHEREx-D4";
   // 1) the SPHEREx all-sky map of the whole window, smoothed, to take over from Aladin's pixels as the zoom lands
   const cw = 1152, ch = Math.round(cw * sky.H / sky.W);
-  renderCutout(SURVEYS.tmass, req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), cw, ch, {}).then(c => {
+  renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, {}).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
   }).catch(() => {});
   // 2) the archive image at the same wavelength, same window, for the left panel
   const f = $("pSpx").getBoundingClientRect(), pw = Math.min(720, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
-  renderCutout(det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, req.pos[0], req.pos[1], req.fieldDeg, pw, ph, WISETONE).then(c => {
+  renderCutout(det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).then(c => {
     if (req && req.nonce === my) wiseCanvas = c;
   }).catch(() => {});
-  await flyTo(req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), 6500);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 6500);
   req.arrived = true; autoCuts();
   setView("waiting"); tryReveal();
 }
@@ -298,7 +301,7 @@ function paintWise(res) {
   if (wiseCanvas) {
     // blur WISE to SPHEREx's sharpness so the two panels show the same detail
     const extra = Math.sqrt(Math.max(0, SPX_PSF ** 2 - (WISE_PSF[res.compare.band] || 6.1) ** 2)) / 2.355;
-    const pxPerArcsec = cv.width / (res.field_deg * 3600);
+    const pxPerArcsec = cv.height / (res.field_deg * 3600);
     g.filter = `blur(${(extra * pxPerArcsec).toFixed(2)}px)`;
     g.drawImage(wiseCanvas, 0, 0, cv.width, cv.height); g.filter = "none";
     const im = g.getImageData(0, 0, cv.width, cv.height), d = im.data, v = [];
@@ -313,10 +316,9 @@ function paintWise(res) {
     g.putImageData(im, 0, 0);
   }
   if (hasPM(res)) {                                  // where the target sat when WISE looked (about 2010.4)
-    const p = propagate({ ra: res.ra, dec: res.dec, pmra: res.pmra, pmdec: res.pmdec, epoch: args.mid }, 2010.4), s = res.field_deg * 3600;
-    const dx = (p[0] - res.ra_c) * Math.cos(res.dec_c * Math.PI / 180) * 3600, dy = (p[1] - res.dec_c) * 3600;
-    g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, cv.width / 300);
-    g.beginPath(); g.arc(cv.width * (0.5 - dx / s), cv.height / 2 - cv.width * dy / s, cv.width * 0.045, 0, Math.PI * 2); g.stroke(); g.restore();
+    const w = wisePos(res, cv.width, cv.height);
+    g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, cv.height / 300);
+    g.beginPath(); g.arc(w[0], w[1], cv.height * 0.045, 0, Math.PI * 2); g.stroke(); g.restore();
   }
 }
 function ghost(g, x0, y0, x1, y1, size) {           // where it was in 2010 (grey) -> where it is now
@@ -330,10 +332,10 @@ function ghost(g, x0, y0, x1, y1, size) {           // where it was in 2010 (gre
   }
   g.restore();
 }
-function wisePos(res, w) {                          // 2010.4 position in panel pixels (panel width w, square field centred)
+function wisePos(res, cw, ch) {                    // 2010.4 position in panel pixels; the field spans the panel height
   const p = propagate({ ra: res.ra, dec: res.dec, pmra: res.pmra, pmdec: res.pmdec, epoch: args.mid }, 2010.4), s = res.field_deg * 3600;
   const dx = (p[0] - res.ra_c) * Math.cos(res.dec_c * Math.PI / 180) * 3600, dy = (p[1] - res.dec_c) * 3600;
-  return [w * (0.5 - dx / s), -w * dy / s];        // y relative to the field centre
+  return [cw / 2 - ch * dx / s, ch / 2 - ch * dy / s];
 }
 function ring(g, x, y, size, a = 0.85) {
   if (x < -size * .1 || x > size * 1.1) return;
@@ -374,25 +376,17 @@ function loop(t) {
 function drawSpx() {
   const cv = $("spxCv"), g = cv.getContext("2d"), n = imgs.length; if (!n || !P) return;
   const i = Math.floor(tpos) % n, fr = tpos - Math.floor(tpos), j = (i + 1) % n, e = smooth(fr);
-  const cw = cv.width, ch = cv.height, y0 = (ch - cw) / 2;
-  // the square frame, with its top and bottom edges feathered into the map around it
-  const t = tmp.getContext("2d");
-  t.globalCompositeOperation = "source-over"; t.imageSmoothingQuality = "high"; t.clearRect(0, 0, cw, cw);
-  t.filter = `blur(${(cw / P.nx * 0.25).toFixed(1)}px)`;
-  t.globalAlpha = 1; t.drawImage(imgs[i], 0, 0, cw, cw);
-  if (e > 0.003) { t.globalAlpha = e; t.drawImage(imgs[j], 0, 0, cw, cw); t.globalAlpha = 1; }
-  t.filter = "none";
-  const m = t.createLinearGradient(0, 0, 0, cw), fe = 0.07;
-  m.addColorStop(0, "rgba(0,0,0,0)"); m.addColorStop(fe, "#000"); m.addColorStop(1 - fe, "#000"); m.addColorStop(1, "rgba(0,0,0,0)");
-  t.globalCompositeOperation = "destination-in"; t.fillStyle = m; t.fillRect(0, 0, cw, cw); t.globalCompositeOperation = "source-over";
-  g.drawImage(backdrop, 0, 0); g.drawImage(tmp, 0, y0);
+  const cw = cv.width, ch = cv.height, S = ch, ox = (cw - S) / 2;
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  g.filter = `blur(${(S / P.nx * 0.25).toFixed(1)}px)`;
+  g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
+  if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
+  g.filter = "none";
   if (hasPM(P)) {
     const a = P.marks[i], b = P.marks[j];
-    const cur = a && b ? [(a[0] + (b[0] - a[0]) * e) * cw, y0 + (a[1] + (b[1] - a[1]) * e) * cw] : a ? [a[0] * cw, y0 + a[1] * cw] : null;
-    const w0 = wisePos(P, cw);
-    if (cur) ghost(g, w0[0], ch / 2 + w0[1], cur[0], cur[1], cw);
-    if (a && b) ring(g, (a[0] + (b[0] - a[0]) * e) * cw, y0 + (a[1] + (b[1] - a[1]) * e) * cw, cw, 0.9);
-    else if (a) ring(g, a[0] * cw, y0 + a[1] * cw, cw, 0.9);
+    const cur = a && b ? [ox + (a[0] + (b[0] - a[0]) * e) * S, (a[1] + (b[1] - a[1]) * e) * S] : a ? [ox + a[0] * S, a[1] * S] : null;
+    const w0 = wisePos(P, cw, ch);
+    if (cur) { ghost(g, w0[0], w0[1], cur[0], cur[1], S); ring(g, cur[0], cur[1], S, 0.9); }
   }
   const k = Math.round(tpos) % n;
   $("spxCap").textContent = P.dates[k];

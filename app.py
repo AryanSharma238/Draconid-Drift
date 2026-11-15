@@ -41,6 +41,22 @@ S.setdefault("result", None)      # payload for the stage (or None while on the 
 S.setdefault("error", None)
 S.setdefault("seen", None)        # nonce of the last request we handled
 
+STAGE_DIR = os.path.join(HERE, "data", "stage")
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def cached_stage(spec):
+    """Stage payload for a spec: precomputed file for the presets, else computed once and kept in memory."""
+    import json
+    f = os.path.join(STAGE_DIR, f"{spec.key}.json")
+    if spec.key in PRESETS and os.path.exists(f):
+        with open(f, encoding="utf-8") as fh:
+            return json.load(fh)
+    res = pipeline.run(spec, mode="target", n_null=120, build=False, max_frames=120)
+    ra_now, dec_now = pipeline.propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
+    return build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, spec.epoch)
+
+
 req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, key="stage", default=None)
 
 if req and req.get("nonce") != S.seen:
@@ -65,11 +81,8 @@ if req and req.get("nonce") != S.seen:
                                  pmra=float(req.get("pmra") or 0.0), pmdec=float(req.get("pmdec") or 0.0),
                                  epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D4")
         try:
-            big = spec.fov_arcsec > 400
-            res = pipeline.run(spec, mode="target", n_null=120 if big else 300, build=False, max_frames=120)
-            ra_now, dec_now = pipeline.propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
-            payload = build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, spec.epoch)
-            payload["nonce"] = req["nonce"]
+            payload = cached_stage(spec)
+            payload = dict(payload, nonce=req["nonce"])
             S.result = payload
         except pipeline.DataFetchError as e:
             S.result, S.error = None, f"No SPHEREx images here yet ({e}). Try another spot."

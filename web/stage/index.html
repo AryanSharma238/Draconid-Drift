@@ -18,6 +18,12 @@
   <div id="prog-wrap" aria-hidden="true"><div id="prog-bar"></div></div>
   <div id="veil"></div>
 
+  <section id="land">
+    <h1>Draconid Drift</h1>
+    <p>Watch the nearby sky move, frame by frame, with NASA's SPHEREx.</p>
+    <div class="cta"><button id="demoBtn" type="button">Demo</button><button id="exploreBtn" type="button">Explore</button></div>
+  </section>
+
   <header id="bar">
     <button id="brand" type="button">Draconid Drift</button>
     <nav>
@@ -41,24 +47,37 @@
       <div class="lab"><h2 id="wiseH">AllWISE</h2><p id="wiseCap">2010</p></div></section>
     <section class="panel img" id="pSpx"><canvas id="spxCv"></canvas><canvas class="hl" id="spxHl"></canvas>
       <div class="lab"><h2>SPHEREx</h2><p id="spxCap"></p></div>
-      <div class="ctrl"><button id="play" type="button" aria-label="Pause"><svg viewBox="0 0 24 24" width="16" height="16"><g class="ip"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></g><path class="ia" d="M7 5v14l12-7z"/></svg></button>
-        <div id="track"><div id="fill"></div><div id="thumb"></div></div></div></section>
+      <div class="modes">
+        <button id="timeBtn" type="button" title="Past and future view (coming next)">Past &amp; future</button>
+        <button id="cmpBtn" type="button" aria-pressed="true">Hide comparison</button>
+      </div>
+      <div class="speed" role="group" aria-label="Playback speed">
+        <button type="button" data-s="0.5">0.5×</button><button type="button" data-s="1" class="on">1×</button><button type="button" data-s="2">2×</button>
+      </div></section>
     <aside class="panel" id="info">
-      <div class="blk"><h3>What we are looking at</h3><div class="big" id="iName"></div></div>
-      <div class="blk"><h3>Coords</h3><div class="coord" id="iCoord"></div></div>
-      <div class="blk"><h3>More info</h3><div id="iVerdict"></div></div>
+      <div class="head"><h1 class="big" id="iName"></h1><p class="kind" id="iKind"></p></div>
+      <div class="facts" id="iFacts"></div>
+      <p class="coord" id="iCoord"></p>
+      <div class="blk"><h3 id="specH">Spectrum</h3><div class="spec" id="iSpec"></div></div>
+      <div class="blk"><h3>Brightness over time</h3><div class="lc" id="iLc"></div></div>
       <div class="blk grow"><h3>In the frame</h3><ul class="objs" id="iObjs"></ul></div>
+      <p class="src" id="iSrc"></p>
     </aside>
   </main>
-  <footer id="foot"></footer>
+  <footer id="foot">
+    <div id="wave" role="slider" tabindex="0" aria-label="Wavelength" aria-valuemin="1" aria-valuemax="6" aria-valuenow="3">
+      <div id="waveSegs"></div><div id="waveKnob"></div>
+    </div>
+    <p id="waveLab"></p>
+  </footer>
 
   <section id="about" aria-hidden="true">
     <div class="pg" data-page="targets"><h1>Targets</h1><p>Stars and brown dwarfs close enough to the Sun that SPHEREx sees them move. Pick one to fly there.</p><ul id="tlist"></ul></div>
     <div class="pg" data-page="how"><h1>How it works</h1>
-      <p>SPHEREx maps the whole sky every six months. Draconid Drift pulls every SPHEREx exposure that covers the spot you choose, cleans and lines them up, and plays them in time order.</p>
-      <p>To see motion over decades, the left panel shows the same patch from an older survey: 2MASS (about 2000) or AllWISE (2010), blurred to SPHEREx's sharpness so the two compare fairly.</p>
-      <p>A star counts as moving when it is clearly detected where it should be now and its old position is empty. Each claim is checked against random spots in the same frames, so the confidence shown is how often noise alone would pass.</p>
-      <p>The list beside the images names what is in view from SIMBAD. Bright sources with no name are sorted into star, galaxy or nebula by a small model trained on SPHEREx sources that SIMBAD has already identified.</p></div>
+      <p>SPHEREx maps the whole sky every six months in 102 colours of infrared light, from 0.75 to 5 µm. Draconid Drift pulls every SPHEREx exposure that covers the spot you choose, cleans and lines them up, and plays them in time order.</p>
+      <p>The bar along the bottom switches between SPHEREx's six detectors, each covering one slice of that range. Every exposure measures one colour at each spot, so measuring a star in all of them gives its spectrum: the dips show water, carbon monoxide or ices.</p>
+      <p>Press Compare to put the same patch beside SPHEREx as 2MASS saw it around 2000, blurred to SPHEREx's sharpness. Nearby stars visibly move in between.</p>
+      <p>The facts come from SIMBAD and Gaia. Bright sources with no name are sorted into star, galaxy or nebula by a small model trained on SPHEREx sources that SIMBAD has already identified, and are marked as a guess.</p></div>
     <div class="pg" data-page="data"><h1>Data</h1>
       <p><b>SPHEREx</b> spectral images, NASA/IPAC Infrared Science Archive.</p>
       <p><b>2MASS</b> and <b>AllWISE</b> sky maps, served as HiPS by IRSA and CDS.</p>

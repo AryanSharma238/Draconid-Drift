@@ -76,6 +76,40 @@ if "ra" in qp and "dec" in qp and S.result is None and S.seen is None:
     except Exception as e:
         pass
 
+@st.cache_data(show_spinner=False, max_entries=32)
+def cached_bands(name, ra_c, dec_c, field_deg, det, targets):
+    """All six detector ranges for the stage's field, and a spectrum for each target position."""
+    import hashlib
+    import json
+    from drift.bands import all_bands
+    key = "bands_" + hashlib.md5(f"{ra_c:.5f}{dec_c:.5f}{field_deg:.5f}".encode()).hexdigest()[:10]
+    pre = os.path.join(STAGE_DIR, f"{name}_bands.json")
+    if name in PRESETS and os.path.exists(pre):
+        with open(pre, encoding="utf-8") as fh:
+            return json.load(fh)
+    spec = pipeline.Spec(name=name, ra=ra_c, dec=dec_c, pmra=0.0, pmdec=0.0, epoch=float(MID_EPOCH),
+                         fov_arcsec=field_deg * 3600.0, detector=det, key=key)
+    return all_bands(spec, targets=targets)
+
+
+if req and req.get("nonce") != S.seen and req.get("type") == "bands":
+    S.seen = req["nonce"]
+    r = S.result
+    if r and r.get("nonce") == req.get("for") and "bands" not in r:
+        try:
+            tg = [("target", float(r["ra"]), float(r["dec"]), float(r.get("pmra") or 0), float(r.get("pmdec") or 0),
+                   float(r.get("epoch") or MID_EPOCH))] + [
+                (str(i), float(o["ra"]), float(o["dec"]), float(o.get("pmra") or 0), float(o.get("pmdec") or 0),
+                 float(o.get("epoch") or MID_EPOCH)) for i, o in enumerate(r.get("objects") or [])]
+            b = cached_bands(str(req.get("key") or r["name"]), float(r["ra_c"]), float(r["dec_c"]), float(r["field_deg"]),
+                             r.get("detector") or "SPHEREx-D3", tuple(tg))
+            S.result = dict(r, bands=b["bands"], spectra=b["spectra"])
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            S.result = dict(r, bands=[], spectra={})
+    st.rerun()
+
 if req and req.get("nonce") != S.seen:
     S.seen = req["nonce"]
     S.error = None

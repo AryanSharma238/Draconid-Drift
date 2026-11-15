@@ -131,13 +131,13 @@ def _get_ec2_client() -> httpx.Client:
     return _EC2_CLIENT
 
 
-def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube | None:
+def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, detector_str: str, cap=None) -> Cube | None:
     """If the EC2 SSH tunnel (`127.0.0.1:8000`) is active and exposes `/api/cube`, fetch from EC2."""
     try:
         client = _get_ec2_client()
         r = client.get(
             f"{EC2_BACKEND_URL}/api/cube",
-            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": EC2_MAX_FRAMES, "dtype": "f2"},
+            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": cap or EC2_MAX_FRAMES, "dtype": "f2"},
         )
         if r.status_code == 404:
             raise DataFetchError("no usable SPHEREx frames at this position")
@@ -175,13 +175,14 @@ LIVE_MAX_FRAMES = 60    # without the EC2 server, fetch at most this many exposu
 LIVE_MAX_DEG = 0.5      # ... and at most this field size
 
 
-async def _load_capped(grid, det):
+async def _load_capped(grid, det, cap=None):
+    cap = cap or LIVE_MAX_FRAMES
     import contextlib
     from backend import index as _index
     from backend.sequence import Loaded, fetch_interleaved, group_refs_by_pass
     refs = sorted(await _index.find_images(grid.ra, grid.dec, det), key=lambda r: r.t_mjd)
-    if len(refs) > LIVE_MAX_FRAMES:
-        keep = np.unique(np.linspace(0, len(refs) - 1, LIVE_MAX_FRAMES).round().astype(int))
+    if len(refs) > cap:
+        keep = np.unique(np.linspace(0, len(refs) - 1, cap).round().astype(int))
         refs = [refs[i] for i in keep]
     pass_of = group_refs_by_pass(refs)
     got, failed = {}, []
@@ -196,15 +197,15 @@ async def _load_capped(grid, det):
     return Loaded(refs, [got[i] for i in sorted(got)], failed)
 
 
-def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube:
+def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int, detector_str: str, cap=None) -> Cube:
     """Run `backend.sequence.load_frames` directly using the local S3 footprint index + S3 byte-range reads."""
     grid = backend_make_grid(ra, dec, min(size_deg, LIVE_MAX_DEG))
     try:
-        loaded = asyncio.run(_load_capped(grid, det))
+        loaded = asyncio.run(_load_capped(grid, det, cap))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         try:
-            loaded = loop.run_until_complete(_load_capped(grid, det))
+            loaded = loop.run_until_complete(_load_capped(grid, det, cap))
         finally:
             loop.close()
     except Exception as e:
@@ -218,7 +219,7 @@ def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int
 
 
 # ------------------------------------------------------------------ load ----
-def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
+def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0, max_frames=None):
     """Returns (Cube, info dict). Order: demo -> local cache -> EC2 tunnel -> local S3 range-read backend."""
     from .clean import build_cube
 
@@ -243,9 +244,9 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
     if progress:
         progress(1, 4)
 
-    cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector)
+    cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector, max_frames)
     if cube is None:
-        cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector)
+        cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector, max_frames)
 
     if progress:
         progress(4, 4)

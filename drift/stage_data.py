@@ -81,6 +81,55 @@ def smoothed_frames(cube, k=SMOOTH_K):
     return out
 
 
+def brightness(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
+    """Brightness of the target in each frame relative to its median: [[year, rel]] and a one-line summary.
+    Different frames sample slightly different wavelengths, so only clear changes (> 3x the scatter of the
+    noise) are called variable."""
+    from .bands import _ap, _ring, pixel_track
+    try:
+        track = pixel_track(cube, ra, dec, pmra, pmdec, epoch)      # a fast star is measured where it is
+    except Exception:
+        return None
+    ny, nx = cube.cube.shape[1:]
+    def collect(fn):
+        out = []
+        for i in np.argsort(cube.mjd):
+            x, y = track[i]
+            if not (7 <= x < nx - 7 and 7 <= y < ny - 7):
+                continue
+            f, e = fn(cube.cube[i], cube.var[i], x, y)
+            if np.isfinite(f) and np.isfinite(e) and f > 0 and np.isfinite(cube.wl[i]):
+                out.append((float(np.asarray(mjd_to_year(cube.mjd[i]))), f, e, float(cube.wl[i])))
+        return out
+    pts = collect(_ap)
+    if len(pts) < 0.5 * cube.n:                    # saturated core: use the wings
+        pts = collect(_ring)
+    if len(pts) < 6:
+        return None
+    a = np.array(pts)
+    # each frame sees a slightly different wavelength: compare only frames taken at nearly the same wavelength
+    # (within 1% of each other), so a star's colour is never mistaken for a change in brightness
+    rel = np.full(len(a), np.nan)
+    for i, w in enumerate(a[:, 3]):
+        same = np.abs(a[:, 3] / w - 1) < 0.01
+        if same.sum() >= 3:
+            rel[i] = a[i, 1] / np.median(a[same, 1])
+    keep = np.isfinite(rel)
+    if keep.sum() < 6:
+        return None
+    a, rel = a[keep], rel[keep]
+    med = np.median(a[:, 1])
+    spread = 1.4826 * np.median(np.abs(rel - 1))
+    noise = float(np.median(a[:, 2]) / med)
+    if med / np.median(a[:, 2]) < 5:
+        word = "too faint to tell"
+    elif spread > max(3 * noise, 0.08):
+        word = f"varies by about {100 * (np.percentile(rel, 90) - np.percentile(rel, 10)) / 2:.0f}%"
+    else:
+        word = f"steady (±{max(100 * spread, 1):.0f}%)"
+    return dict(pts=[[round(t, 3), round(float(r), 3)] for t, r in zip(a[:, 0], rel)], word=word)
+
+
 def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None, dec0=None, epoch0=None):
     """ra/dec: position shown in the info panel. ra0/dec0/epoch0: catalogue position for the mover search."""
     ra0, dec0, epoch0 = (ra if ra0 is None else ra0), (dec if dec0 is None else dec0), (epoch if epoch0 is None else epoch0)
@@ -107,18 +156,32 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     from concurrent.futures import ThreadPoolExecutor
     from .inframe import in_frame
     tgt = dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0))
-    ex = ThreadPoolExecutor(2)            # Gaia and SIMBAD lookups at the same time
+    from .facts import target_facts
+    ex = ThreadPoolExecutor(3)            # Gaia and SIMBAD lookups at the same time
     fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
     fo = ex.submit(in_frame, cube)
+    # SIMBAD positions are for the year 2000: look the target up where it was then
+    d00 = float(dec0) + float(pmdec) * (2000.0 - float(epoch0)) / 3.6e6
+    r00 = float(ra0) + float(pmra) * (2000.0 - float(epoch0)) / 3.6e6 / max(np.cos(np.radians(d00)), 1e-6)
+    ff = ex.submit(target_facts, name, r00, d00, float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0))
     try:
-        movers = fm.result(timeout=0.6)
+        movers = fm.result(timeout=2.5)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=0.6)
+        objects = fo.result(timeout=2.5)
     except Exception:
         objects = []
+    try:
+        facts = ff.result(timeout=2.5)
+    except Exception:
+        facts = {}
     ex.shutdown(wait=False)
+    if facts.get("kind") or not objects:
+        lc = brightness(cube, float(ra), float(dec), float(pmra), float(pmdec), float(epoch))
+    else:                                          # a patch of sky: follow its brightest listed object instead
+        o = objects[0]
+        lc = brightness(cube, o["ra"], o["dec"], o.get("pmra") or 0.0, o.get("pmdec") or 0.0, o.get("epoch") or 2026.0)
     verdict = verdict_summary(res["verdict"])
     tm = [m for m in movers if m["name"] == name]
     if tm:                                         # long-baseline motion confirmed against the archive image
@@ -127,6 +190,8 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
-                movers=movers, objects=objects,
+                movers=movers, objects=objects, facts=facts, lc=lc,
+                visits=int(cube.n), span=[Time(float(np.nanmin(cube.mjd)), format="mjd").iso[:7],
+                                          Time(float(np.nanmax(cube.mjd)), format="mjd").iso[:7]],
                 detector=cube.detector, compare=cmp,
                 verdict=verdict, source=cube.source)

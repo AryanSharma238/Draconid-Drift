@@ -1,5 +1,6 @@
 import { Sky, unit, radec, slerp } from "./sky.js";
 import { renderCutout, SURVEYS } from "./healpix.js";
+import * as intro from "./intro.js";
 
 /* ---------------------------------------------------------------- Streamlit bridge */
 const send = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
@@ -121,7 +122,7 @@ function bindSky() {
   const rect = () => clip.getBoundingClientRect();
   clip.addEventListener("pointerdown", () => { smoothId++; smoothCv.classList.remove("on"); }, true);
   window.addEventListener("pointerup", () => { if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 200); });
-  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about");
+  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about") && !app.classList.contains("landing");
   // a short hint that follows the cursor the first few seconds it moves over the sky
   let tipUntil = 0, tipDone = false;
   window.addEventListener("pointermove", e => {
@@ -365,7 +366,7 @@ async function tryReveal() {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
         Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
       const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 300))]);
+      return await job;
     } catch (e) { return null; }
   })();
 
@@ -380,12 +381,16 @@ async function tryReveal() {
     clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;
   });
 
-  wiseCanvas = await wisePromise;
   await tweenPromise;
-  paintWise(res);
+  // the archive picture arrives when it arrives: paint now (empty if not ready) and again once it is in
+  wiseCanvas = null; paintWise(res);
+  wisePromise.then(c => { if (c && args.result && args.result.nonce === res.nonce) { wiseCanvas = c; paintWise(res); } });
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
   clip.style.visibility = "hidden";
   setView("view"); startPlayer();
+  syncCmp(res);
+  if (res.bands) onBands(res);
+  else emit({ type: "bands", nonce: "b" + Date.now(), for: res.nonce, key: req && req.key });
 }
 
 function abortHome() { busy = false; req = null; leave(true); }
@@ -424,19 +429,134 @@ async function unsquish() {
 
 /* ---------------------------------------------------------------- page two content */
 const hasPM = res => Math.hypot(res.pmra || 0, res.pmdec || 0) > 50;     // a ring only helps for real movers
+const fmtN = (x, d = 0) => x.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d });
+function fmtAgo(y) {                                 // how long ago light left, in plain units
+  if (y == null) return null;
+  if (y < 1000) return `${fmtN(y, y < 10 ? 1 : 0)} yrs`;
+  if (y < 1e6) return `${fmtN(Math.round(y / 100) * 100)} yrs`;
+  if (y < 1e9) return `${fmtN(y / 1e6, y < 1e7 ? 1 : 0)} Myr`;
+  return `${fmtN(y / 1e9, 1)} Gyr`;
+}
+function fmtLy(ly) { return ly == null ? null : ly < 100 ? `${fmtN(ly, 1)} ly` : `${fmtN(ly)} ly`; }
+function fact(v, label) { return `<div><b>${v ?? "—"}</b><span>${label}</span></div>`; }
 function fillPage(res) {
-  last_res = res;
+  last_res = res; specFor = "target"; bandSel = detNum(res.detector);
+  const f = res.facts || {};
   $("iName").textContent = res.name;
+  const where = f.constellation ? `in ${f.constellation}` : "";
+  $("iKind").textContent = f.kind ? `${f.kind}${where ? " · " + where : ""}` : `Patch of sky ${where}`.trim();
+  let row;
+  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).length, "objects listed") + fact(res.visits, "SPHEREx visits");
+  else if (f.galaxy) row = fact(f.redshift != null ? `z ${fmtN(f.redshift, f.redshift < 0.1 ? 4 : 3)}` : null, "redshift") + fact(fmtAgo(f.light_years_ago), "light left") + fact(f.size_arcmin ? `${fmtN(f.size_arcmin, 1)}′` : null, "size on sky");
+  else row = fact(fmtLy(f.distance_ly), "distance") + fact(f.temp_k ? `≈${fmtN(f.temp_k)} K` : null, "surface temp") + fact(f.motion_arcsec_yr != null ? `${fmtN(f.motion_arcsec_yr, f.motion_arcsec_yr < 1 ? 2 : 1)}″/yr` : null, "motion on sky");
+  $("iFacts").innerHTML = row;
   const [a, b] = sexa(res.ra, res.dec);
-  $("iCoord").innerHTML = `${a}<br>${b}`;
-  const v = res.verdict;
-  $("iVerdict").innerHTML = `<div class="chip tone-${v.tone}"><i></i>${v.word}</div>` +
-    `<div class="conf">Confidence <b>${v.conf}</b></div>` +
-    `<div class="dots">${v.checks.map(c => `<span class="${c.ok ? "ok" : "no"}"><em></em>${c.k}</span>`).join("")}</div>`;
+  $("iCoord").textContent = `${a}   ${b}`;
+  $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
+  const lc = res.lc;
+  $("iLc").innerHTML = lc ? `${sparkline(lc.pts)}<span>${lc.word}</span>` : `<span class="dim">Not enough clean frames to tell</span>`;
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
+  drawSpectrum(); buildWave(res);
 }
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
+function sparkline(pts) {
+  const W = 120, H = 26, t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
+  const vs = pts.map(p => p[1]), lo = Math.min(0.85, ...vs), hi = Math.max(1.15, ...vs);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${((p[0] - t0) / (t1 - t0 || 1) * W).toFixed(1)},${(H - (p[1] - lo) / (hi - lo) * H).toFixed(1)}`).join("");
+  const y1 = (H - (1 - lo) / (hi - lo) * H).toFixed(1);
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><line x1="0" x2="${W}" y1="${y1}" y2="${y1}" class="base"/><path d="${d}"/></svg>`;
+}
+
+/* ---------------------------------------------------------------- spectrum */
+let specFor = "target";
+const BAND_RANGE = { 1: [0.75, 1.11], 2: [1.11, 1.64], 3: [1.64, 2.42], 4: [2.42, 3.82], 5: [3.82, 4.42], 6: [4.42, 5.0] };
+function drawSpectrum() {
+  const res = last_res, el = $("iSpec"); if (!res) return;
+  const objs = res.objects || [], nm = o => o ? (o.name || "unnamed source") : "the centre";
+  const who = specFor === "target" ? (res.facts?.kind ? res.name : nm(objs[0])) : nm(objs[+specFor]);
+  let key = specFor;
+  if (specFor === "target" && !res.facts?.kind && objs.length) key = "0";       // a patch of sky: its brightest listed object
+  $("specH").textContent = `Spectrum · ${who || ""}`;
+  if (!res.spectra) { el.innerHTML = `<div class="wait">Measuring all 102 colours across six detectors…</div>`; return; }
+  const sp = res.spectra[key];
+  if (!sp || sp.smooth.length < 3) { el.innerHTML = `<div class="wait">Too faint or too close to the edge for a spectrum</div>`; return; }
+  const W = 300, H = 118, L = 30, R = 6, T = 14, B = 18, x = w => L + (w - 0.75) / (5 - 0.75) * (W - L - R);
+  const ys = sp.smooth.flatMap(s => [s[2], s[3]]).concat(sp.pts.map(p => p[1])).filter(v => v > 0).sort((a, b) => a - b);
+  const lo = ys[Math.floor(ys.length * 0.02)] || 1, hi = ys[Math.floor(ys.length * 0.98)] || 10, useLog = hi / lo > 25;
+  const fy = useLog ? v => Math.log10(Math.max(v, lo / 2)) : v => v, a0 = fy(useLog ? lo / 1.3 : Math.min(0, lo)), a1 = fy(hi * 1.12);
+  const y = v => T + (1 - (fy(v) - a0) / (a1 - a0)) * (H - T - B);
+  const r = BAND_RANGE[bandSel] || [0, 0];
+  let g = `<rect x="${x(r[0])}" y="${T}" width="${x(r[1]) - x(r[0])}" height="${H - T - B}" class="band"/>`;
+  for (const w of [1, 2, 3, 4]) g += `<text x="${x(w)}" y="${H - 4}" class="ax">${w}</text>`;
+  g += `<text x="${W - R}" y="${H - 4}" class="ax end">5 µm</text>`;
+  g += sp.pts.map(p => `<circle cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="1.3" class="pt"/>`).join("");
+  const top = sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[3]).toFixed(1)}`).join("");
+  const bot = sp.smooth.slice().reverse().map(s => `L${x(s[0]).toFixed(1)},${y(Math.max(s[2], lo / 2)).toFixed(1)}`).join("");
+  g += `<path d="${top}${bot}Z" class="err"/>`;
+  g += `<path d="${sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[1]).toFixed(1)}`).join("")}" class="line"/>`;
+  for (const f of sp.features) g += `<line x1="${x(f.wl)}" x2="${x(f.wl)}" y1="${T}" y2="${H - B}" class="ft"/><text x="${x(f.wl)}" y="${T - 3}" class="ftl">${f.label}</text>`;
+  const note = sp.features.length ? "" : `<p class="specnote">No strong absorption features</p>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${note}${sp.wings ? `<p class="specnote">Saturated core: shape measured in the star's wings</p>` : ""}`;
+}
+
+/* ---------------------------------------------------------------- wavelength bar (bottom) */
+let bandSel = 3;
+function buildWave(res) {
+  const segs = $("waveSegs"); segs.innerHTML = "";
+  const have = new Set((res.bands || []).filter(b => b.ok).map(b => b.det)); have.add(detNum(res.detector));
+  for (let d = 1; d <= 6; d++) {
+    const [a, b] = BAND_RANGE[d], s = document.createElement("button");
+    s.type = "button"; s.style.flex = String(b - a); s.dataset.d = d;
+    s.className = (have.has(d) ? "" : "off") + (d === bandSel ? " on" : "");
+    s.innerHTML = `<span>${a.toFixed(2)}–${b.toFixed(2)}</span>`;
+    s.setAttribute("aria-label", `${a}–${b} micrometres`);
+    s.onclick = () => selectBand(d);
+    segs.appendChild(s);
+  }
+  placeKnob(); waveLabel();
+}
+const BAND_NOTE = { 1: "starlight; hot stars shine brightest", 2: "water vapour dips in cool stars", 3: "sees through dust", 4: "water ice and glowing dust", 5: "carbon dioxide ice", 6: "carbon monoxide ice, warm dust" };
+function waveLabel() {
+  const [a, b] = BAND_RANGE[bandSel], ready = bandReady(bandSel);
+  $("waveLab").innerHTML = `<b>${a.toFixed(2)}–${b.toFixed(2)} µm</b> · ${BAND_NOTE[bandSel]}${ready ? "" : ` <em>loading…</em>`}`;
+  $("wave").setAttribute("aria-valuenow", bandSel);
+}
+const bandReady = d => !last_res || d === detNum(last_res.detector) || (last_res.bands || []).some(b => b.det === d && b.ok);
+function placeKnob() {
+  const seg = $("waveSegs").querySelector(`[data-d="${bandSel}"]`), w = $("wave"); if (!seg) return;
+  const r = seg.getBoundingClientRect(), r0 = w.getBoundingClientRect();
+  $("waveKnob").style.left = `${r.left - r0.left + r.width / 2}px`;
+  [...$("waveSegs").children].forEach(c => c.classList.toggle("on", +c.dataset.d === bandSel));
+}
+function selectBand(d) {
+  if (!last_res || d === bandSel) return;
+  bandSel = d; placeKnob(); waveLabel(); drawSpectrum();
+  if (bandReady(d)) showBand(d);
+}
+function showBand(d) {
+  const res = last_res; if (!res || !P) return;
+  const base = d === detNum(res.detector), b = (res.bands || []).find(x => x.det === d);
+  const src = base ? res : b; if (!src) return;
+  loadFrames({ frames: src.frames }).then(() => { P.curDates = src.dates; P.curBase = base; tpos = 0; drawSpx(); });
+}
+(() => {                                             // drag along the bar, or use the arrow keys
+  const w = $("wave"); let down = false;
+  const pick = e => { const segs = [...$("waveSegs").children]; for (const s of segs) { const r = s.getBoundingClientRect(); if (e.clientX >= r.left && e.clientX <= r.right) return selectBand(+s.dataset.d); } };
+  w.addEventListener("pointerdown", e => { down = true; w.setPointerCapture(e.pointerId); pick(e); });
+  w.addEventListener("pointermove", e => { if (down) pick(e); });
+  w.addEventListener("pointerup", () => { down = false; });
+  w.addEventListener("keydown", e => { if (e.key === "ArrowRight" && bandSel < 6) selectBand(bandSel + 1); if (e.key === "ArrowLeft" && bandSel > 1) selectBand(bandSel - 1); });
+  window.addEventListener("resize", placeKnob);
+})();
+function onBands(res) {                             // the other five ranges and the spectra have arrived
+  last_res = Object.assign(last_res || {}, { bands: res.bands, spectra: res.spectra });
+  buildWave(last_res); drawSpectrum();
+  if (bandSel !== detNum(last_res.detector) && bandReady(bandSel)) showBand(bandSel);
+}
+
 /* "In the frame": a small picture of each object and what it is. Hover rings it in both panels. */
 let hl = null;
 function fillObjects(res) {
@@ -446,15 +566,29 @@ function fillObjects(res) {
   list.forEach(o => {
     const li = document.createElement("li");
     li.innerHTML = `<div class="th"></div><div><div class="nm"></div><div class="kd"></div></div>`;
-    li.querySelector(".nm").textContent = o.name || o.kind;
-    li.querySelector(".kd").textContent = o.name ? o.kind : "Unnamed";
-    li.onmouseenter = () => { hl = o; li.classList.add("on"); drawHl(); };
-    li.onmouseleave = () => { if (hl === o) hl = null; li.classList.remove("on"); drawHl(); };
+    li.querySelector(".nm").textContent = o.name || "Unnamed source";
+    const ago = fmtAgo(o.ago);
+    li.querySelector(".kd").textContent = o.kind + (ago ? ` · light left ${ago} ago` : "") + (o.name ? "" : " (our model's guess)");
+    const idx = String(list.indexOf(o));
+    li.onmouseenter = () => { hl = o; li.classList.add("on"); drawHl(); specFor = idx; drawSpectrum(); };
+    li.onmouseleave = () => { if (hl === o) hl = null; li.classList.remove("on"); drawHl(); specFor = "target"; drawSpectrum(); };
     ul.appendChild(li);
     const fov = Math.min(res.field_deg, Math.max(0.025, 1.5 * (o.size || 0) / 3600));
     objThumbQ.push({ o, box: li.querySelector(".th"), fov });
   });
   pumpObj();
+}
+// stretch each small picture on its own: a bright star no longer turns the whole square white
+function autoTone(c) {
+  const g = c.getContext("2d"), im = g.getImageData(0, 0, c.width, c.height), d = im.data, L = [];
+  for (let i = 0; i < d.length; i += 4) L.push(d[i] + d[i + 1] + d[i + 2]);
+  L.sort((a, b) => a - b);
+  const lo = L[Math.floor(L.length * .6)], hi = Math.max(lo + 60, L[Math.floor(L.length * .995)]);
+  for (let i = 0; i < d.length; i += 4) {
+    const l = d[i] + d[i + 1] + d[i + 2], t = Math.min(1, Math.max(0, (l - lo) / (hi - lo))), q = Math.asinh(t * 6) / Math.asinh(6), k = l > 0 ? q * 765 / l : 0;
+    for (let c2 = 0; c2 < 3; c2++) d[i + c2] = Math.min(255, 19 + d[i + c2] * k * .92);
+  }
+  g.putImageData(im, 0, 0); return c;
 }
 const objThumbQ = []; let objBusy = false;
 async function pumpObj() {
@@ -462,7 +596,7 @@ async function pumpObj() {
   while (objThumbQ.length) {
     const { o, box, fov } = objThumbQ.shift(); if (!box.isConnected) continue;
     try {
-      const c = await renderCutout(SURVEYS.tmass, o.ra, o.dec, fov, 88, 88, { gain: 1.3, gamma: 0.85, black: 0.03 });
+      const c = autoTone(await renderCutout(SURVEYS.tmass, o.ra, o.dec, fov, 88, 88, {}));
       if (box.isConnected) { box.appendChild(c); requestAnimationFrame(() => c.classList.add("ok")); }
     } catch (e) { /* no picture: the row still reads */ }
   }
@@ -488,6 +622,7 @@ const SPX_PSF = 9.0, WISE_PSF = { W1: 6.1, W2: 6.4, J: 2.9, H: 2.8, K: 2.9 };   
 function paintWise(res) {
   const cv = $("wiseCv"), f = $("pWise").getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(f.width * d); cv.height = Math.round(f.height * d);
+  if (!cv.width || !cv.height) return;                 // the archive panel is hidden until compared
   const g = cv.getContext("2d"); g.imageSmoothingQuality = "high";
   g.fillStyle = "#13161a"; g.fillRect(0, 0, cv.width, cv.height);
   if (wiseCanvas) {
@@ -499,8 +634,9 @@ function paintWise(res) {
     const im = g.getImageData(0, 0, cv.width, cv.height), d = im.data, v = [];
     for (let i = 0; i < d.length; i += 64) v.push(d[i]);
     v.sort((a, b) => a - b);
-    let lo = v[Math.floor(v.length * 0.5)], hi = Math.max(lo + 20, v[Math.floor(v.length * 0.995)]);
-    if (lo > 230) { lo = v[0]; hi = 255; }        // saturated archive tiles (Galactic centre): keep what detail there is
+    const med = v[Math.floor(v.length * 0.5)], sg = Math.max(1, v[Math.floor(v.length * 0.84)] - med);
+    let lo = med + 2 * sg, hi = Math.max(lo + 14 * sg, v[Math.floor(v.length * 0.995)]);   // noise stays black
+    if (lo > 200) { lo = v[Math.floor(v.length * 0.6)]; hi = 255; }   // a bright star fills the field: stretch only its glow
     for (let i = 0; i < d.length; i += 4) {
       const t = Math.min(1, Math.max(0, (d[i] - lo) / (hi - lo))), q = Math.asinh(t * 8) / Math.asinh(8);
       d[i] = 19 + q * 219; d[i + 1] = 22 + q * 218; d[i + 2] = 26 + q * 218;
@@ -548,7 +684,7 @@ function loadFrames(res) {
   return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => { imgs = a; });
 }
 function preparePlayer(res) {
-  P = res; tpos = 0; playing = true; $("play").classList.remove("paused");
+  P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curBase = true;
   const cv = $("spxCv"), f = $("pSpx").getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(f.width * d); cv.height = Math.round(f.height * d);
   // above and below the square field: the same SPHEREx all-sky map the flight landed on
@@ -565,7 +701,10 @@ function preparePlayer(res) {
 }
 function startPlayer() { last = performance.now(); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop); }
 function stopPlayer() { cancelAnimationFrame(raf); P = null; }
-const FPS = 5;
+let FPS = 5;
+document.querySelectorAll("#pSpx .speed button").forEach(b => b.onclick = () => {
+  FPS = 5 * +b.dataset.s; document.querySelectorAll("#pSpx .speed button").forEach(x => x.classList.toggle("on", x === b));
+});
 function loop(t) {
   if (!P) return;
   const dt = Math.max(0, Math.min(0.1, (t - last) / 1000)); last = t;
@@ -577,32 +716,36 @@ function drawSpx() {
   const i = Math.floor(tpos) % n, fr = tpos - Math.floor(tpos), j = (i + 1) % n, e = smooth(fr);
   const cw = cv.width, ch = cv.height, S = ch, ox = (cw - S) / 2;
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
-  g.filter = `blur(${(S / P.nx * 0.25).toFixed(1)}px)`;
+  if (backdrop) g.drawImage(backdrop, 0, 0);          // either side of the square field: the sky map, dimmed
+  g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
   g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
   if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
   g.filter = "none";
   const yr = P.years ? (j > i ? P.years[i] + (P.years[j] - P.years[i]) * e : P.years[i]) : args.mid;
-  for (const m of P.movers || []) {                 // grey = 2010 (AllWISE), dotted line, red = now (this SPHEREx frame)
+  for (const m of (P.curBase === false ? [] : P.movers || [])) {   // grey = archive position, dotted line, red = now
     const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
     ghost(g, p0[0], p0[1], p1[0], p1[1], S * 0.78); ring(g, p1[0], p1[1], S * 0.64, 0.95);
   }
 
-  const k = Math.round(tpos) % n;
-  $("spxCap").textContent = P.dates[k];
-  const frac = n > 1 ? tpos / (n - 1) : 0, tr = $("track").clientWidth;
-  $("fill").style.width = Math.min(1, frac) * tr + "px"; $("thumb").style.left = Math.min(1, frac) * tr + "px";
+  const k = Math.round(tpos) % n, ds = P.curDates || P.dates;
+  $("spxCap").textContent = ds[k % ds.length] || "";
 }
-$("play").onclick = () => { playing = !playing; $("play").classList.toggle("paused", !playing); };
-(() => {
-  const tr = $("track"); let was = true;
-  const seek = e => { const r = tr.getBoundingClientRect(); tpos = clamp01((e.clientX - r.left) / r.width) * Math.max(1, imgs.length - 1); if (P) drawSpx(); };
-  tr.addEventListener("pointerdown", e => { dragging = true; was = playing; tr.setPointerCapture(e.pointerId); seek(e); });
-  tr.addEventListener("pointermove", e => { if (dragging) seek(e); });
-  tr.addEventListener("pointerup", () => { dragging = false; });
-})();
+/* before / after: the archive panel sits beside SPHEREx by default; the button hides or shows it */
+app.classList.add("split");
+function syncCmp(res) {
+  const on = app.classList.contains("split");
+  $("cmpBtn").setAttribute("aria-pressed", String(on));
+  $("cmpBtn").textContent = on ? "Hide comparison" : `Compare with ${res?.compare?.year || "~2000"}`;
+}
+$("cmpBtn").onclick = () => {
+  const on = !app.classList.contains("split");
+  app.classList.toggle("split", on); $("cmpBtn").setAttribute("aria-pressed", String(on));
+  $("cmpBtn").textContent = on ? "Hide comparison" : `Compare with ${last_res?.compare?.year || "~2000"}`;
+  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase]; preparePlayer(P); [tpos, P.curDates, P.curBase] = keep; drawSpx(); } if (last_res) paintWise(last_res); drawHl(); });
+};
 window.addEventListener("keydown", e => {
   if (e.key === "Escape") { if (app.classList.contains("searching")) closeSearch(); else if (app.classList.contains("about")) closeAbout(); }
-  if (e.key === " " && view === "view" && document.activeElement === document.body) { e.preventDefault(); $("play").click(); }
+  if (e.key === " " && view === "view" && document.activeElement === document.body) { e.preventDefault(); playing = !playing; }
 });
 
 /* ---------------------------------------------------------------- search */
@@ -757,5 +900,18 @@ function closeAbout() { page = null; app.classList.remove("about"); document.que
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
-function onArgs() { tryReveal(); }
+/* ---------------------------------------------------------------- landing: Demo / Explore */
+app.classList.add("landing");
+intro.preload().catch(() => {});
+const leaveLanding = () => app.classList.remove("landing");
+$("exploreBtn").onclick = leaveLanding;
+$("demoBtn").onclick = () => {
+  intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
+};
+
+function onArgs() {
+  if (args.result) leaveLanding();
+  if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.bands && !last_res.bands) onBands(args.result);
+  tryReveal();
+}   // a deep link or a result already loaded: no landing screen
 boot();

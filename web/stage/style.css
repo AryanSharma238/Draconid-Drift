@@ -190,3 +190,100 @@ body{font-size:15px}
 #tlist button:hover,#tlist button:focus-visible{background:rgba(122,74,81,.45)}
 #tlist small{display:block;color:var(--dim);font-size:14px;margin-top:2px}
 @media (max-width:760px){#bar .navb[data-page="how"],#bar .navb[data-page="data"]{display:none}}
+
+/* landing: title over the spinning sky */
+#land{position:absolute;inset:0;z-index:35;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;padding:24px;
+  background:radial-gradient(ellipse at center,rgba(19,22,26,.55),rgba(19,22,26,.15) 60%,transparent);transition:opacity .8s ease}
+#land h1{font-size:clamp(44px,8vw,112px);font-weight:800;letter-spacing:-.02em;line-height:1;color:#fff}
+#land p{font-size:clamp(16px,1.6vw,21px);color:rgba(255,255,255,.86);max-width:36ch}
+#land .cta{display:flex;gap:14px;margin-top:14px}
+#land button{font:600 17px/1 var(--display,inherit);padding:16px 34px;border-radius:999px;cursor:pointer;transition:background .2s,color .2s,transform .2s}
+#demoBtn{background:#7A4A51;color:#fff;border:2px solid #7A4A51}
+#demoBtn:hover{background:#8d5760;border-color:#8d5760}
+#exploreBtn{background:transparent;color:#fff;border:2px solid #b07a83}
+#exploreBtn:hover{background:rgba(122,74,81,.25)}
+#land button:focus-visible{outline:2px solid #fff;outline-offset:3px}
+#app.landing #bar{opacity:0!important;pointer-events:none}
+#app:not(.landing) #land{opacity:0;pointer-events:none}
+
+/* the Demo intro */
+#intro{position:fixed;inset:0;z-index:2000;pointer-events:auto;transition:opacity .9s}
+#intro.out{opacity:0;pointer-events:none}
+#intro canvas{position:absolute;inset:0;width:100%;height:100%}
+#intro .flash{position:absolute;inset:0;background:#fff;opacity:0}
+#intro .vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55))}
+#intro .grain{position:absolute;inset:-50%;pointer-events:none;opacity:.07;mix-blend-mode:screen;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+  animation:grain .5s steps(4) infinite}
+@keyframes grain{0%{transform:translate(0,0)}25%{transform:translate(-3%,2%)}50%{transform:translate(2%,-3%)}75%{transform:translate(-2%,-1%)}}
+#intro .cap{position:absolute;left:50%;bottom:9vh;transform:translateX(-50%);width:min(90vw,760px);text-align:center;color:#fff;
+  font-size:clamp(16px,1.7vw,22px);font-weight:500;letter-spacing:.01em;text-shadow:0 1px 12px rgba(0,0,0,.7);opacity:0}
+#intro .skip{position:absolute;right:28px;bottom:28px;background:rgba(0,0,0,.35);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.3);
+  border-radius:999px;padding:9px 18px;font:500 14px/1 inherit;cursor:pointer}
+#intro .skip:hover{color:#fff;border-color:#fff}
+@media (prefers-reduced-motion:reduce){#intro .grain{animation:none}}
+
+/* ---- one big SPHEREx panel; the 2000/2010 archive panel only appears when compared */
+#app:not(.split) #pWise{display:none}
+#app:not(.split) #pSpx{grid-column:1/span 2}
+#pSpx .modes{position:absolute;left:18px;bottom:16px;z-index:3;display:flex;gap:8px;opacity:0}
+#app.shown #pSpx .modes{opacity:1;transition:opacity .5s .3s}
+#cmpBtn,#timeBtn{padding:9px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.28);
+  background:rgba(13,15,18,.55);backdrop-filter:blur(8px);color:#fff;font:500 14px/1 inherit;cursor:pointer;transition:background .2s,border-color .2s}
+#cmpBtn:hover,#timeBtn:hover{border-color:#fff}
+#cmpBtn[aria-pressed=true]{background:#7A4A51;border-color:#7A4A51}
+#pSpx .speed{position:absolute;right:18px;bottom:16px;z-index:3;display:flex;gap:2px;padding:3px;border-radius:999px;background:rgba(13,15,18,.6);backdrop-filter:blur(8px);opacity:0}
+#pSpx .speed button{padding:6px 10px;border-radius:999px;font:500 13px/1 inherit;color:rgba(255,255,255,.7);cursor:pointer}
+#pSpx .speed button.on{background:rgba(255,255,255,.14);color:#fff}
+#app.shown #pSpx .speed{opacity:1;transition:opacity .5s .3s}
+
+/* ---- info panel */
+#info{gap:16px;justify-content:flex-start;padding:24px 26px;overflow:hidden}
+#info .head .big{font-size:clamp(26px,2.4vw,38px);line-height:1.05;margin:0}
+#info .kind{margin-top:6px;color:var(--dim);font-size:15px}
+#info .facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+#info .facts b{display:block;font-size:20px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap}
+#info .facts span{display:block;margin-top:2px;font-size:12.5px;color:var(--dim)}
+#info .coord{font-size:13.5px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:pre}
+#info .blk h3{margin-bottom:6px}
+#info .spec svg{width:100%;height:auto;display:block;overflow:visible}
+#info .spec .band{fill:rgba(168,106,115,.16)}
+#info .spec .ax{fill:var(--dim);font-size:9px;text-anchor:middle}
+#info .spec .ax.end{text-anchor:end}
+#info .spec .pt{fill:rgba(255,255,255,.22)}
+#info .spec .err{fill:rgba(232,190,140,.18)}
+#info .spec .line{fill:none;stroke:#e8be8c;stroke-width:1.8;stroke-linejoin:round}
+#info .spec .ft{stroke:rgba(255,255,255,.35);stroke-dasharray:2 3}
+#info .spec .ftl{fill:#fff;font-size:9.5px;text-anchor:middle;font-weight:600}
+#info .spec .wait,#info .specnote{font-size:13px;color:var(--dim)}
+#info .spec .wait{height:96px;display:grid;place-items:center;text-align:center;border-radius:10px;background:rgba(0,0,0,.2)}
+#info .lc{display:flex;align-items:center;gap:12px;font-size:14px}
+#info .lc svg path{fill:none;stroke:#e8be8c;stroke-width:1.4}
+#info .lc svg .base{stroke:rgba(255,255,255,.18);stroke-dasharray:2 3}
+#info .lc .dim{color:var(--dim)}
+#info .src{font-size:12.5px;color:var(--dim);margin-top:auto}
+#info .grow{min-height:120px}
+
+/* ---- wavelength bar along the bottom */
+#foot{display:flex;align-items:center;gap:18px;padding:0 18px 0 14px;pointer-events:none}
+#app.shown #foot{pointer-events:auto}
+#wave{position:relative;flex:1;height:30px;cursor:pointer;touch-action:none;outline-offset:4px}
+#waveSegs{display:flex;gap:3px;height:100%}
+#waveSegs button{position:relative;border-radius:8px;background:linear-gradient(180deg,#3a3f47,#2b2f35);cursor:pointer;min-width:0;overflow:hidden;transition:background .2s}
+#waveSegs button span{font-size:11.5px;color:rgba(255,255,255,.55);white-space:nowrap;font-variant-numeric:tabular-nums}
+#waveSegs button:hover{background:linear-gradient(180deg,#4a505a,#363b42)}
+#waveSegs button.on{background:linear-gradient(180deg,#8d5760,#6a3f46)}
+#waveSegs button.on span{color:#fff}
+#waveSegs button.off{opacity:.45}
+#waveKnob{position:absolute;top:-4px;width:12px;height:38px;margin-left:-6px;border-radius:7px;background:#fff;box-shadow:0 0 0 3px rgba(19,22,26,.8);pointer-events:none;transition:left .25s cubic-bezier(.2,.8,.2,1)}
+#waveLab{flex:none;font-size:14.5px;color:rgba(255,255,255,.75);min-width:300px;text-align:right}
+#waveLab b{color:#e8be8c;font-weight:700}
+#waveLab em{color:var(--dim);font-style:normal}
+#page2 .panel.img,#page2 #info{aspect-ratio:auto;height:100%}
+#page2{align-content:stretch}
+@media (max-width:820px){#page2 .panel.img{aspect-ratio:1/1.1;height:auto}#app:not(.split) #pSpx{grid-column:auto}}
+
+#waveKnob{display:none}
+#info .spec{height:140px;position:relative}
+#info .spec .specnote{position:absolute;left:0;bottom:0}
+#info .spec svg{height:118px}

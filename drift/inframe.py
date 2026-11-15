@@ -24,7 +24,7 @@ KIND = {  # SIMBAD object type -> plain words
     "LIN": "Active galaxy", "EmG": "Emission-line galaxy", "IG": "Interacting galaxies", "PaG": "Galaxy pair", "GrG": "Galaxy group",
     "ClG": "Galaxy cluster", "QSO": "Quasar", "BLL": "Blazar", "rG": "Radio galaxy", "H2G": "Starburst galaxy",
     "LSB": "Faint galaxy", "bCG": "Compact galaxy", "IR": "Infrared source", "X": "X-ray source", "Rad": "Radio source",
-    "Psr": "Pulsar", "XB*": "X-ray binary", "CV*": "Cataclysmic variable", "C?*": "Carbon star",
+    "Psr": "Pulsar", "Bla": "Blazar (quasar)", "Q?": "Quasar candidate", "LeG": "Lensed galaxy", "LeQ": "Lensed quasar", "G?": "Galaxy candidate", "ClG?": "Galaxy cluster", "GiG?": "Galaxy", "XB*": "X-ray binary", "CV*": "Cataclysmic variable", "C?*": "Carbon star",
 }
 GUESS = {"star": "Star", "galaxy": "Galaxy", "other": "Nebula or cloud"}
 
@@ -85,13 +85,50 @@ def _sep(a1, d1, a2, d2):
                                         np.cos(np.radians(d1)) * np.cos(np.radians(d2)) * np.cos(np.radians(a1 - a2)), -1, 1)))
 
 
+def _ago(o):
+    """How many years ago this object's light left (parallax for stars, redshift for galaxies), or None."""
+    from .facts import light_years, lookback_years
+    num = lambda v: float(v) if str(v or "").strip() not in ("", "nan") else None
+    try:
+        ly = light_years(num(o.get("plx")))
+        if ly and ly < 2e5:
+            return ly
+        return lookback_years(num(o.get("z")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_peaks(peaks, img, s):
+    """Drop the false peaks a bright star makes: bumps in its halo and wings, and spikes, which all sit inside
+    the star's glow. A real source is compact (it stands well above its own ring 3-5 px out) and is not in the
+    halo of something much brighter. Saturated cores (holes in the stack) count as the brightest sources."""
+    from scipy.ndimage import label, center_of_mass
+    ny, nx = img.shape
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    anchors = [(np.inf, float(cx), float(cy)) for cy, cx in
+               (center_of_mass(lab == i) for lab, n in [label(~np.isfinite(s))] for i in range(1, n + 1)
+                if 2 <= (lab == i).sum() <= 400)]
+    kept = []
+    for f, x, y in peaks:
+        if f <= 0:
+            continue
+        ring = img[(np.hypot(xx - x, yy - y) >= 3) & (np.hypot(xx - x, yy - y) <= 5)]
+        if ring.size and img[y, x] > 0 and (img[y, x] - np.median(ring)) / img[y, x] < 0.35:
+            continue                                   # a broad bump, not a point or a compact galaxy
+        halo = lambda F, ax, ay: np.hypot(ax - x, ay - y) < (14.0 if not np.isfinite(F) else min(14.0, 2.5 * np.sqrt(F / f)))
+        if any(halo(F, ax, ay) for F, ax, ay in anchors + kept if (not np.isfinite(F)) or F > 3 * f):
+            continue                                   # inside a much brighter source's glow
+        kept.append((f, x, y))
+    return kept
+
+
 def in_frame(cube, year=2026.0, stack=None):
     """List of dict(name, kind, ra, dec, size_arcsec, named, p). Always returns something when the frame has any source."""
     n, ny, nx = cube.cube.shape
     ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
     half = nx * SPX_ARCSEC / 3600 / 2
     from concurrent.futures import ThreadPoolExecutor
-    cols = "oid, main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis AS majax, nbref, sp_type, morph_type"
+    cols = "oid, main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis AS majax, nbref, sp_type, morph_type, plx_value, rvz_redshift"
     circ = f"1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra_c:.6f},{dec_c:.6f},{half * 1.42:.6f}))"
     big = f"1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra_c:.6f},{dec_c:.6f},{half * 1.42 + 0.3:.6f}))"
     with ThreadPoolExecutor(3) as ex:      # well-studied objects, anything at all (for matching peaks), and big objects
@@ -117,7 +154,7 @@ def in_frame(cube, year=2026.0, stack=None):
         if not (0 <= x < nx and 0 <= y < ny):
             continue
         size = float(r["majax"]) * 60 if (r.get("majax") or "").strip() not in ("", "nan") else 0.0
-        sim.append(dict(sp=(r.get("sp_type") or "").strip('"').strip(), morph=(r.get("morph_type") or "").strip('"').strip(), pmra=pa, pmdec=pd, oid=int(r["oid"]), main=r["main_id"], ot=str(r["otype"]).strip('"'), ra=a2, dec=d2, x=float(x), y=float(y),
+        sim.append(dict(plx=r.get("plx_value"), z=r.get("rvz_redshift"), sp=(r.get("sp_type") or "").strip('"').strip(), morph=(r.get("morph_type") or "").strip('"').strip(), pmra=pa, pmdec=pd, oid=int(r["oid"]), main=r["main_id"], ot=str(r["otype"]).strip('"'), ra=a2, dec=d2, x=float(x), y=float(y),
                         size=size, nbref=int(r["nbref"] or 0)))
     if stack is None:
         stack, _ = deep_stack(cube)
@@ -128,6 +165,8 @@ def in_frame(cube, year=2026.0, stack=None):
     ys, xs = np.nonzero((z == maximum_filter(z, size=5)) & (z > 6))
     img = np.nan_to_num(s - med)
     peaks = sorted(((_ap(img, x, y, 2.5)[0], int(x), int(y)) for x, y in zip(xs, ys)), reverse=True)
+    peaks = [p for p in peaks if 7 <= p[1] < nx - 7 and 7 <= p[2] < ny - 7]   # cut off by the edge: unmeasurable
+    peaks = _clean_peaks(peaks, img, s)
     out, used = [], set()
     # 1. named extended objects whose body covers a good part of the frame (a galaxy, a nebula): listed even without one peak
     for o in sorted(sim, key=lambda o: -o["nbref"]):
@@ -165,7 +204,7 @@ def in_frame(cube, year=2026.0, stack=None):
         if o["oid"]:
             name = nice.get(o["oid"]) or _readable(_clean(o["main"]))
             res.append(dict(name=name, kind=detail(kind_of(o["ot"]), o["sp"], o["morph"]), named=True, ra=o["ra"], dec=o["dec"], size=round(o["size"], 1),
-                            pmra=round(o["pmra"], 1), pmdec=round(o["pmdec"], 1), epoch=year))
+                            pmra=round(o["pmra"], 1), pmdec=round(o["pmdec"], 1), epoch=year, ago=_ago(o)))
         else:
             res.append(dict(name=None, kind=guess_detail(o["guess"], o.get("fv")), named=False, ra=o["ra"], dec=o["dec"], size=0.0, p=o["p"]))
     return res

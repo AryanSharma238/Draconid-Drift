@@ -22,12 +22,14 @@ def robust_sigma(a):
 
 
 def stretch_params(images):
-    """lo=-0.35*sigma (preserves faint sky texture), soft=sigma, hi=max(p99.6, 10 sigma)."""
+    """Black level above the noise so empty sky stays dark: lo = median + 1.5 sigma, soft = 2 sigma,
+    hi = max(p99.6, 25 sigma). A field with nothing bright then shows only its real sources, not noise blobs."""
     stack = np.concatenate([np.asarray(i).ravel() for i in images])
     stack = stack[np.isfinite(stack)]
     sig = robust_sigma(stack)
-    hi = max(float(np.percentile(stack, 99.6)) if stack.size else 10 * sig, 10 * sig)
-    return dict(lo=-0.35 * sig, soft=sig, hi=hi, sig=sig)
+    med = float(np.median(stack)) if stack.size else 0.0
+    hi = max(float(np.percentile(stack, 99.6)) if stack.size else 25 * sig, med + 25 * sig)
+    return dict(lo=med + 1.5 * sig, soft=2.0 * sig, hi=hi, sig=sig)
 
 
 def reconstruct_saturated_cores(img, sig):

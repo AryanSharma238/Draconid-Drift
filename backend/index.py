@@ -73,7 +73,7 @@ def _dedupe(refs: list[ImageRef]) -> list[ImageRef]:
 
 @dataclass
 class _Index:
-    rows: list[dict[str, str]]
+    rows: list[str]  # S3 keys (release / exposure / version parsed from them)
     ra: np.ndarray  # (N, 4)
     dec: np.ndarray  # (N, 4)
     mjd_beg: np.ndarray  # (N,)
@@ -99,17 +99,33 @@ def _load(path: Path) -> _Index:
     hit = _cache.get(path)
     if hit and hit[0] == mtime:
         return hit[1]
-    rows = read_rows(path)
-    ra = np.array([[float(r[f"ra{i}"]) for i in range(4)] for r in rows]).reshape(-1, 4)
-    dec = np.array([[float(r[f"dec{i}"]) for i in range(4)] for r in rows]).reshape(-1, 4)
-    mjd = np.array([float(r["mjd_beg"]) for r in rows])
+    # stream the CSV straight into compact arrays: a dict per row cost ~1.7 KB (460 MB for one index)
+    from array import array
+    slim, corners, mjds = [], array("d"), array("d")
+    try:
+        with gzip.open(path, "rt", newline="") as f:
+            rd = csv.reader(f)
+            h = {n: i for i, n in enumerate(next(rd))}
+            ik, ir, ie, iv, im = h["key"], h["release"], h["exposure_id"], h["version"], h["mjd_beg"]
+            ic = [h[f"ra{i}"] for i in range(4)] + [h[f"dec{i}"] for i in range(4)]
+            for r in rd:
+                if len(r) < len(h):
+                    continue
+                slim.append(r[ik])                          # release, exposure_id, version are all in the key (checked: 0 mismatches)
+                corners.extend(float(r[i]) for i in ic)
+                mjds.append(float(r[im]))
+    except EOFError:
+        log.warning("index %s has a truncated tail; kept %d complete rows", path, len(slim))
+    cc = np.frombuffer(corners, dtype=float).reshape(-1, 8)
+    del corners
+    ra, dec, mjd = cc[:, :4].copy(), cc[:, 4:].copy(), np.frombuffer(mjds, dtype=float).copy()
     rr, dd = np.deg2rad(ra), np.deg2rad(dec)
     v = np.stack([np.cos(dd) * np.cos(rr), np.cos(dd) * np.sin(rr), np.sin(dd)], axis=-1)
     cen = v.mean(axis=1)
     cen /= np.linalg.norm(cen, axis=-1, keepdims=True) if len(cen) else 1
-    idx = _Index(rows, ra, dec, mjd, cen)
+    idx = _Index(slim, ra, dec, mjd, cen)
     _cache[path] = (mtime, idx)
-    log.info("loaded footprint index: %d rows", len(rows))
+    log.info("loaded footprint index: %d rows", len(slim))
     return idx
 
 
@@ -154,16 +170,18 @@ def _find(idx: _Index, ra: float, dec: float, det: int) -> list[ImageRef]:
     hit = cand[contains(ra, dec, idx.ra[cand], idx.dec[cand])]
     refs = []
     for i in hit:
-        row = idx.rows[i]
-        key = derive_key(row["key"], det)
+        k = idx.rows[i]
+        p = parse_key(k)
+        release, exposure_id, version, mjd_beg = p["release"], p["exposure_id"], p["version"], idx.mjd_beg[i]
+        key = derive_key(k, det)
         refs.append(
             ImageRef(
-                obs_id=f"{row['exposure_id']}_D{det}",
-                exposure_id=row["exposure_id"],
+                obs_id=f"{exposure_id}_D{det}",
+                exposure_id=exposure_id,
                 detector=det,
-                t_mjd=float(row["mjd_beg"]),
-                release=row["release"],
-                version=row["version"],
+                t_mjd=float(mjd_beg),
+                release=release,
+                version=version,
                 uri=key,
             )
         )

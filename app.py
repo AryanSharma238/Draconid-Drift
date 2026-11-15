@@ -95,6 +95,8 @@ if req and req.get("nonce") != S.seen:
             S.result = payload
         except pipeline.DataFetchError as e:
             S.result, S.error = None, f"No SPHEREx images here yet ({e}). Try another spot."
-        except Exception as e:  # keep the page alive
+        except Exception as e:  # keep the page alive, and leave the full traceback in the app log
+            import traceback
+            traceback.print_exc()
             S.result, S.error = None, f"Something went wrong ({type(e).__name__}: {e})."
     st.rerun()

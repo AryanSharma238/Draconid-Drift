@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 from astropy.time import Time
 
-from . import SPHEREX_PIXEL_ARCSEC, classifier, objects
+from . import SPHEREX_PIXEL_ARCSEC
 from .clean import burst_groups
 from .movers import find_movers
 from .render import flip_y, stretch_params, to_dark_jpeg_b64
@@ -81,40 +81,6 @@ def smoothed_frames(cube, k=SMOOTH_K):
     return out
 
 
-def frame_objects(cube, target_name="", target_ra=None, target_dec=None, rel=objects.REL_BRIGHT):
-    """Detect the brightest object in the frame plus any object at least `rel` (75%) as bright, and classify each."""
-    ny, nx = cube.cube.shape[1:]
-    det_objs = objects.detect(cube, rel=rel)
-    out = []
-    for o in det_objs:
-        pts = classifier.cube_spectrum_points(cube, o["x"], o["y"])
-        info = classifier.classify_position(o["ra"], o["dec"], points=pts, fetch_remote_spectrum=False)
-        obj_name = info.get("match_id") or ""
-        if not obj_name and target_ra is not None and target_dec is not None:
-            sep = 3600.0 * np.hypot((o["ra"] - target_ra) * np.cos(np.radians(target_dec)), o["dec"] - target_dec)
-            if sep < 15.0 and target_name:
-                obj_name = target_name
-        if not obj_name:
-            obj_name = f"Source #{o['rank'] + 1}"
-        out.append(dict(
-            rank=int(o["rank"]),
-            name=obj_name,
-            cls=info["cls"],
-            label=info["label"],
-            prob=round(float(info["prob"]), 3),
-            conf=f"{100 * float(info['prob']):.0f}%",
-            sp_type=info.get("sp_type") or "",
-            rel=round(float(o["rel"]), 3),
-            rel_pct=f"{100 * float(o['rel']):.0f}%",
-            ra=round(float(o["ra"]), 5),
-            dec=round(float(o["dec"]), 5),
-            x=round((float(o["x"]) + 0.5) / nx, 4),
-            y=round((flip_y(float(o["y"]), ny) + 0.5) / ny, 4),
-            saturated=bool(o.get("saturated", False)),
-        ))
-    return out
-
-
 def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None, dec0=None, epoch0=None):
     """ra/dec: position shown in the info panel. ra0/dec0/epoch0: catalogue position for the mover search."""
     ra0, dec0, epoch0 = (ra if ra0 is None else ra0), (dec if dec0 is None else dec0), (epoch if epoch0 is None else epoch0)
@@ -147,10 +113,9 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     if tm:                                         # long-baseline motion confirmed against the archive image
         moved = tm[0]["shift_px"] * SPHEREX_PIXEL_ARCSEC
         verdict = dict(verdict, word=f"Moved {moved:.0f}\u2033 since {cmp['year'].lstrip('~')}", tone="good")
-    objs = frame_objects(cube, target_name=name, target_ra=ra, target_dec=dec)
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
                 movers=movers,
                 detector=cube.detector, compare=cmp,
-                verdict=verdict, objects=objs, source=cube.source)
+                verdict=verdict, source=cube.source)

@@ -510,6 +510,11 @@ async function go(item) {
   const targetLabel = item.name || (item.ra != null && item.dec != null ? `${Number(item.ra).toFixed(2)}°, ${Number(item.dec) >= 0 ? "+" : ""}${Number(item.dec).toFixed(2)}°` : "Target");
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000, targetLabel);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
+
+  // After arriving and locking on, showcase the star / nebula / patch of space in high resolution for a full 3 seconds
+  // while SPHEREx and archival data are prepared
+  await new Promise(r => setTimeout(r, 3000));
+
   setView("waiting"); tryReveal();
 }
 
@@ -521,7 +526,7 @@ function startProgressBar() {
   bar.style.width = "0%";
   let progress = 0;
   const startT = performance.now();
-  const duration = 2900;  // fills while the 3.0 s flight runs
+  const duration = 5800;  // smoothly spans the 3s pan + 3s high-resolution star showcase
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);

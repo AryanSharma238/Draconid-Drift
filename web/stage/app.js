@@ -236,18 +236,20 @@ async function flyTo(ra, dec, fov, dur) {
   const u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
   const fPeak = Math.min(sky.homeFov(), Math.max(f0, Math.hypot(...offsetOf(c0, [ra, dec])) * 1.5, fov * 2));
   await tween(dur, t => {
-    const p = smooth(t);
-    const [r, d] = radec(slerp(u0, u1, p));
+    // Warp-speed acceleration curve (slow takeoff, high-velocity swoop, deep decelerating dive)
+    const p = Math.pow(t, 2.2);
+    const [r, d] = radec(slerp(u0, u1, smooth(t)));
     let f;
-    if (t < 0.4) {
-      const q = t / 0.4;
+    if (t < 0.3) {
+      const q = t / 0.3;
       f = f0 + (fPeak - f0) * smooth(q);
     } else {
-      const q = (t - 0.4) / 0.6;
-      f = fPeak + (fov - fPeak) * smooth(q);
+      const q = (t - 0.3) / 0.7;
+      // Exponential zoom through light cones
+      f = fPeak * Math.pow(fov / fPeak, smooth(q));
     }
     sky.set(r, d, Math.min(f, sky.homeFov()));
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.8) / 0.2)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.75) / 0.25)));
   });
   sky.set(ra, dec, fov);
 }
@@ -306,8 +308,8 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  // Fly smoothly into the star in 700ms while backend fetches data in parallel
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 700);
+  // Cinematic warp-speed dive (+0.5s duration gives Streamlit ~1.2s to compute & bridge data in background)
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 1250);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
@@ -317,16 +319,15 @@ function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
   if (!bar) return;
-  // Start bar already mostly full (65%) during flight so the user never perceives a freeze
-  bar.style.width = "65%";
-  let progress = 65;
+  bar.style.width = "40%";
+  let progress = 40;
   const startT = performance.now();
-  const duration = 1200; // 1.2 seconds ramp from 65% to 96%
+  const duration = 1600; // Smooth 1.6s progression
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
-    progress = 65 + t * 31; // reaches 96%
-    bar.style.width = Math.min(progress, 97) + "%";
+    progress = 40 + t * 57; // reaches 97% smoothly
+    bar.style.width = Math.min(progress, 98) + "%";
     if (t >= 1) { clearInterval(progInterval); progInterval = null; }
   }, 25);
 }

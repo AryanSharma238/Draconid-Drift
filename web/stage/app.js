@@ -316,15 +316,18 @@ function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
   if (!bar) return;
-  bar.style.width = "10%";
-  let progress = 10;
+  bar.style.width = "0%";
+  let progress = 0;
+  const startT = performance.now();
+  const duration = 1800; // 1.8 seconds smooth linear/ease ramp
   progInterval = setInterval(() => {
-    // Smooth asymptotic progress while awaiting EC2 data (moves up to 92%)
-    if (progress < 60) progress += 18;
-    else if (progress < 85) progress += 6;
-    else if (progress < 94) progress += 2;
-    bar.style.width = Math.min(progress, 95) + "%";
-  }, 100);
+    const elapsed = performance.now() - startT;
+    const t = Math.min(1, elapsed / duration);
+    // Smooth ramp reaching 95% at 1.8s
+    progress = t * 95;
+    bar.style.width = Math.min(progress, 96) + "%";
+    if (t >= 1) { clearInterval(progInterval); progInterval = null; }
+  }, 30);
 }
 function stopProgressBar(complete = false) {
   if (progInterval) { clearInterval(progInterval); progInterval = null; }
@@ -332,7 +335,7 @@ function stopProgressBar(complete = false) {
   if (!bar) return;
   if (complete) {
     bar.style.width = "100%";
-    setTimeout(() => { bar.style.width = "0%"; }, 400);
+    setTimeout(() => { bar.style.width = "0%"; }, 250);
   } else {
     bar.style.width = "0%";
   }
@@ -352,26 +355,22 @@ async function tryReveal() {
   stopProgressBar(true);
   setView("settling");
   fillPage(res);
-  const framesPromise = Promise.race([
-    loadFrames(res),
-    new Promise(r => setTimeout(r, 600))
-  ]);
+  loadFrames(res);
   const wisePromise = (async () => {
     try {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
         Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
       const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 800))]);
+      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 300))]);
     } catch (e) { return null; }
   })();
 
   const { W, H, S, k, A, dx, dy } = geom();
-  await framesPromise;
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
-  setTimeout(() => app.classList.add("shown"), 150);
+  setTimeout(() => app.classList.add("shown"), 80);
   
   // Animate the squish transition immediately without waiting on archive image tiles
-  const tweenPromise = tween(450, t => {
+  const tweenPromise = tween(380, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
     inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
     clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;
@@ -381,7 +380,6 @@ async function tryReveal() {
   await tweenPromise;
   paintWise(res);
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
-  await new Promise(r => setTimeout(r, 40));
   clip.style.visibility = "hidden";
   setView("view"); startPlayer();
 }

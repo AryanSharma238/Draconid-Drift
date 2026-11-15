@@ -91,9 +91,14 @@ async function autoCuts() { return;
 }
 let spinning = false;
 function homeView() { return [0, 0, sky.homeFov()]; }
-function fitBlend() {                              // cover only the area outside the all-sky ellipse
-  const w = sky.W * 360 / sky.fov() / 2 + 1, h = w / 2;      // the all-sky ellipse at the current zoom
-  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent 99.6%, #000 100%)`;
+function fitBlend() {                              // cover exactly the area outside the all-sky ellipse (measured, not assumed)
+  const W = sky.W, H = sky.H, edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
+    let lo = 0, hi = Math.hypot(W, H);
+    for (let i = 0; i < 22; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
+    return lo;
+  };
+  const w = edge(1, 0) - 0.5, h = edge(0, 1) - 0.5;
+  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #000 100%)`;
   const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
 }
 async function boot() {
@@ -208,7 +213,7 @@ async function flyTo(ra, dec, fov, dur) {
       const p = smooth(t / tA), c = radec(slerp(u0, uA, p));
       const d = Math.hypot(...offsetOf(c, T));
       const f = Math.max(Math.exp(Math.log(f0) + (Math.log(fA) - Math.log(f0)) * p), d * 3.4);
-      sky.set(c[0], c[1], Math.min(f, Math.max(f0, fA)));
+      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));        // zooms out as far as needed to keep the target in view
     } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
       const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
       const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
@@ -234,8 +239,17 @@ function makeOverlay() {
 }
 
 async function go(item) {
-  if (busy) return; busy = true;
+  if (busy && view !== "view") return;
   closeSearch(true); closeAbout();
+  if (view === "view") {                           // from the three panels: fold back to the sky, then fly on to the next target
+    busy = true; stopPlayer(); setView("leaving"); app.classList.remove("shown");
+    await unsquish();
+    if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
+    sky.grid(true);
+  }
+  for (const id of ["wiseCv", "spxCv"]) { const c = $(id); c.getContext("2d").clearRect(0, 0, c.width, c.height); }   // no leftovers from the last target
+  $("spxCv").classList.remove("on");
+  busy = true;
   req = Object.assign({}, item, { nonce: String(Date.now()) + Math.random().toString(36).slice(2, 6) });
   const cmpI = compareFor(item.detector);
   const shift = Math.hypot(item.pmra || 0, item.pmdec || 0) / 1000 * (args.mid - cmpI.epoch);   // arcsec moved since the archive image
@@ -307,7 +321,17 @@ async function leave(fromError = false) {
   setView("leaving");
   app.classList.remove("shown");
   selEl.classList.remove("on");
-  if (was === "view" || was === "settling") {
+  if (was === "view" || was === "settling") await unsquish();
+  clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
+  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
+  setView("flying");
+  const c = sky.center();
+  await flyHome(c[0], 0, sky.homeFov(), 3200);
+  setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
+}
+// the three panels fold back into the full-screen sky (reverse of the reveal)
+async function unsquish() {
+  {
     const { W, H, S, k, A, dx, dy } = geom();
     clip.style.visibility = "visible"; $("spxCv").classList.remove("on");
     await new Promise(r => setTimeout(r, 300));
@@ -319,11 +343,6 @@ async function leave(fromError = false) {
     });
   }
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
-  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
-  setView("flying");
-  const c = sky.center();
-  await flyHome(c[0], 0, sky.homeFov(), 3200);
-  setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
 
 /* ---------------------------------------------------------------- page two content */
@@ -467,7 +486,7 @@ const thumbCache = new Map(), thumbQ = [];
 let thumbBusy = false;
 function openSearch() {
   if (view !== "home" && view !== "view") return;
-  closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
+  loadCatalog(); closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
   tipEl.classList.remove("on"); showItems(presetItems()); setTimeout(() => qEl.focus(), 120);
 }
 function closeSearch(quick) {
@@ -544,7 +563,31 @@ const FAMOUS = [
   ["Kapteyn's Star", 77.919, -45.018, 6505, -5731, "Fast-moving star"], ["61 Cygni", 316.725, 38.749, 4164, 3250, "Fast-moving pair"],
   ["Groombridge 1830", 178.245, 37.719, 4003, -5813, "Fast-moving star"], ["Wolf 359", 164.120, 7.015, -3842, -2725, "Nearby red dwarf"],
 ].map(([name, ra, dec, pmra, pmdec, kind, size]) => ({ key: "custom", name, ra, dec, pmra, pmdec, epoch: 2000, kind, size: size || 0 }));
-function famous(q) { const s = q.toLowerCase(); return FAMOUS.filter(f => f.name.toLowerCase().includes(s)); }
+// the local directory: every SIMBAD object with a common name, all Messier / NGC / IC objects and ~5000 well-studied stars
+let CATALOG = null, catLoading = null;
+function loadCatalog() {
+  if (!catLoading) catLoading = fetch("catalog.json").then(r => r.json()).then(rows => {
+    CATALOG = rows.map(([name, ra, dec, pmra, pmdec, otype, size, nb]) => ({ key: "custom", name, ra, dec, pmra, pmdec, epoch: 2000,
+      kind: OTYPE[otype] || otype, size, nb, lc: name.toLowerCase() }));
+    if (qEl.value.trim()) qEl.dispatchEvent(new Event("input"));   // refresh results typed before the directory arrived
+    return CATALOG;
+  }).catch(() => (CATALOG = []));
+  return catLoading;
+}
+function famous(q) {
+  const s = q.toLowerCase().replace(/\s+/g, " ").trim(), sq = s.replace(/\s/g, "");
+  const out = FAMOUS.filter(f => f.name.toLowerCase().includes(s));
+  if (CATALOG) {
+    const hit = [];
+    for (const c of CATALOG) {                          // starts with the query, or a word in the name does ("crab" -> "Crab Nebula")
+      if (c.lc.startsWith(s) || c.lc.replace(/\s/g, "").startsWith(sq) || c.lc.includes(" " + s)) { hit.push(c); if (hit.length > 40) break; }
+    }
+    hit.sort((a, b) => ((b.lc === s || b.lc.replace(/\s/g, "") === sq) - (a.lc === s || a.lc.replace(/\s/g, "") === sq)) || (b.lc.startsWith(s) - a.lc.startsWith(s)) || (b.nb - a.nb));
+    const seenPos = new Set(out.map(o => o.ra.toFixed(2) + o.dec.toFixed(2)));
+    for (const h of hit) { const k = h.ra.toFixed(2) + h.dec.toFixed(2); if (!seenPos.has(k)) { seenPos.add(k); out.push(h); } }
+  }
+  return out.slice(0, 8);
+}
 const timed = (url, ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(), ms); return fetch(url, { signal: c.signal }).finally(() => clearTimeout(t)); };
 function parseSesame(t, q) {
   const J = t.match(/%J\s+([\d.]+)\s+([+-][\d.]+)/), P2 = t.match(/%P\s+([-\d.]+)\s+([-\d.]+)/), N = t.match(/%I\.0\s+(.+)/), C = t.match(/%C\.0\s+(\S+)/);
@@ -554,14 +597,18 @@ async function remote(q, my, have) {
   const cap = q[0].toUpperCase() + q.slice(1), vars = [...new Set([q, cap, q.toUpperCase()])];
   const like = vars.flatMap(v => [`'${esc(v)}%'`, `'NAME ${esc(v)}%'`, `'* ${esc(v)}%'`, `'V* ${esc(v)}%'`]).map(p => `id LIKE ${p}`).join(" OR ");
   const adql = `SELECT TOP 8 main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis FROM basic JOIN ident ON oid = oidref WHERE ${like}`;
-  const simbad = timed("https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 6000)
+  const simbad = timed("https://simbad.harvard.edu/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 7000)
     .then(r => r.json()).then(j => (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "", size: x[6] || 0 })))
     .catch(() => []);
   const mirrors = ["https://cds.unistra.fr/cgi-bin/nph-sesame/-oI/SNV?", "https://vizier.cfa.harvard.edu/viz-bin/nph-sesame/-oI/SNV?", "https://vizier.idia.ac.za/viz-bin/nph-sesame/-oI/SNV?"];
   const sesame = Promise.any(mirrors.map(m => timed(m + encodeURIComponent(q), 6000).then(r => r.text()).then(t => { const o = parseSesame(t, q); if (!o.length) throw 0; return o; }))).catch(() => []);
+  const tidy = n => n.replace(/^(NAME|V\*|\*\*|\*)\s+/, "").replace(/\s+/g, " ").trim();
+  const spot = o => (+o.ra).toFixed(2) + "," + (+o.dec).toFixed(2);
   const show = out => {
     if (my !== qid || !sEl.classList.contains("open") || !out.length) return;
-    const seen = new Set(have.map(h => h.name.toLowerCase())); const add = out.filter(o => !seen.has(o.name.toLowerCase()));
+    out.forEach(o => { o.name = tidy(o.name); });
+    const seen = new Set(have.map(h => h.name.toLowerCase())), seenAt = new Set(have.map(spot));
+    const add = out.filter(o => { const k = spot(o); if (seen.has(o.name.toLowerCase()) || seenAt.has(k)) return false; seenAt.add(k); return true; });
     have = have.concat(add).slice(0, 8); showItems(have);
   };
   sesame.then(show); simbad.then(show);                  // whichever answers first shows first

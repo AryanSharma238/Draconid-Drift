@@ -524,8 +524,8 @@ async function go(item) {
   const my = req.nonce, det = item.detector || "SPHEREx-D3";
   // 1) HiDPI 2MASS map of the whole window, razor-sharp, to take over from Aladin's pixels as the zoom lands
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const cw = Math.min(1600, Math.round(sky.W * dpr)), ch = Math.round(cw * sky.H / sky.W);
-  renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, { gain: 1.08, gamma: 0.96 }).then(c => {
+  const cw = Math.min(2400, Math.round(sky.W * dpr)), ch = Math.round(cw * sky.H / sky.W);
+  renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, { gain: 1.16, gamma: 0.92, black: 0.02 }).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
     app.classList.add("smoothready"); if (req.arrived) overlay.style.opacity = "1";
@@ -1067,11 +1067,43 @@ $("cmpBtn").onclick = () => {
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) { paintWise(last_res); fillObjects(last_res); } drawHl(); });
 };
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape") { if (app.classList.contains("searching")) closeSearch(); else if (app.classList.contains("about")) closeAbout(); }
+  if (e.key === "Escape") {
+    const demoEl = $("demo");
+    if (demoEl && demoEl.classList.contains("on")) {
+      demoEl.classList.remove("on");
+      const demoV = $("demoV");
+      if (demoV) demoV.pause();
+      leaveLanding();
+    } else if (app.classList.contains("searching")) closeSearch();
+    else if (app.classList.contains("about")) closeAbout();
+  }
   if (e.key === " " && view === "view" && document.activeElement === document.body) { e.preventDefault(); playing = !playing; }
 });
 
 /* ---------------------------------------------------------------- search */
+const CORE_PRESETS = [
+  // NASA Space Apps Challenge Targets
+  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "High proper-motion red dwarf (10.3″/yr)" },
+  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Cold brown dwarf binary companion" },
+  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Coldest known brown dwarf (8.1″/yr)" },
+  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Young variable star with dimming disk" },
+  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Mira pulsating variable red giant" },
+  // Fast-Moving Stars
+  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)" },
+  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary star system (5.3″/yr)" },
+  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)" },
+  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
+  // Notable Sky Targets
+  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
+  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system to the Sun", fov: 450 },
+  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
+  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant star in Orion", fov: 400 },
+  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard photometric calibrator star", fov: 350 },
+  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Seven Sisters open star cluster (M45)", fov: 1200 },
+  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
+  { key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 }
+];
+
 const sEl = $("search"), qEl = $("q"), listEl = $("results"), sbtn = $("sbtn");
 let items = [], sel = -1, qid = 0;
 const thumbCache = new Map(), thumbQ = [];
@@ -1088,11 +1120,28 @@ function closeSearch(quick) {
 }
 sbtn.onclick = () => (sEl.classList.contains("open") ? closeSearch() : openSearch());
 $("veil").onclick = () => closeSearch();
-const presetItems = () => args.presets.map(p => Object.assign({}, p, { kind: KINDS[p.key] || "" }));
+const presetItems = () => {
+  if (args.presets && args.presets.length) {
+    const combined = [...args.presets.map(p => Object.assign({}, p, { kind: KINDS[p.key] || p.kind || "" }))];
+    const seen = new Set(combined.map(c => c.name.toLowerCase()));
+    for (const p of CORE_PRESETS) {
+      if (!seen.has(p.name.toLowerCase())) { combined.push(p); seen.add(p.name.toLowerCase()); }
+    }
+    return combined;
+  }
+  return CORE_PRESETS;
+};
 
 function showItems(list) {
-  items = list; sel = -1; listEl.innerHTML = "";
-  list.forEach((it, i) => {
+  items = list || []; sel = -1; listEl.innerHTML = "";
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "no-results";
+    li.textContent = "No celestial objects found. Type an object name or coordinates (e.g. 269.45, 4.74)";
+    listEl.appendChild(li);
+    return;
+  }
+  items.forEach((it, i) => {
     const li = document.createElement("li"); li.setAttribute("role", "option");
     li.innerHTML = `<div class="th"></div><div><div class="nm"></div><div class="kd"></div></div>`;
     li.querySelector(".nm").textContent = it.name; li.querySelector(".kd").textContent = it.kind || "";
@@ -1128,7 +1177,8 @@ let deb = 0;
 qEl.addEventListener("input", () => {
   clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
   if (!q) return showItems(presetItems());
-  const local = presetItems().filter(p => p.name.toLowerCase().includes(q.toLowerCase())).concat(famous(q));
+  const qLower = q.toLowerCase();
+  const local = presetItems().filter(p => p.name.toLowerCase().includes(qLower) || (p.kind && p.kind.toLowerCase().includes(qLower))).concat(famous(q));
   const num = parseCoords(q); const first = num ? [num] : local;
   showItems(first);
   if (!num && q.length >= 2) deb = setTimeout(() => remote(q, my, first), 260);
@@ -1249,104 +1299,37 @@ function closeAbout() { page = null; app.classList.remove("about"); document.que
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
-/* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
-const MOVER_CATALOG = [
-  // 5 NASA Challenge Presets
-  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge mover (10.3″/yr)", tag: "Challenge" },
-  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Challenge mover · Brown dwarf pair", tag: "Challenge" },
-  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Challenge mover · Cold brown dwarf (8.1″/yr)", tag: "Challenge" },
-  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Young variable star", tag: "Challenge" },
-  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Mira pulsating star", tag: "Challenge" },
-  // Additional Fast-Moving Stars
-  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)", tag: "Fast Mover" },
-  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary system (5.3″/yr)", tag: "Fast Mover" },
-  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)", tag: "Fast Mover" },
-];
-
-const RANDOM_TARGETS = [
-  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
-  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system", fov: 450 },
-  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
-  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant", fov: 400 },
-  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard calibrator star", fov: 350 },
-  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Open star cluster", fov: 1200 },
-  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
-  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
-];
-
-const sideDrawer = $("side-drawer");
-const drawerToggle = $("drawer-toggle");
-const drawerClose = $("drawer-close");
-const drawerMovers = $("drawer-movers");
-const drawerRandoms = $("drawer-randoms");
-const randomStarBtn = $("random-star-btn");
-
-function initSideDrawer() {
-  if (!drawerMovers || !drawerRandoms) return;
-  drawerMovers.innerHTML = "";
-  drawerRandoms.innerHTML = "";
-
-  function renderList(list, container) {
-    list.forEach(star => {
-      const li = document.createElement("li");
-      li.className = "drawer-star-item";
-      li.innerHTML = `
-        <div class="star-item-main">
-          <div class="star-name">${star.name}</div>
-          <div class="star-desc">${star.kind || ""}</div>
-        </div>
-        ${star.tag ? `<span class="star-badge ${star.tag === 'Challenge' ? 'badge-chal' : 'badge-mover'}">${star.tag}</span>` : ""}
-      `;
-      li.onclick = () => {
-        choose(star);
-      };
-      container.appendChild(li);
-    });
-  }
-
-  renderList(MOVER_CATALOG, drawerMovers);
-  renderList(RANDOM_TARGETS, drawerRandoms);
-
-  if (randomStarBtn) {
-    randomStarBtn.onclick = () => {
-      const pool = [...MOVER_CATALOG, ...RANDOM_TARGETS];
-      const pick = pool[Math.floor(Math.random() * pool.length)];
-      choose(pick);
-    };
-  }
-
-  if (drawerToggle) {
-    drawerToggle.onclick = () => {
-      sideDrawer.classList.toggle("open");
-    };
-  }
-  if (drawerClose) {
-    drawerClose.onclick = () => {
-      sideDrawer.classList.remove("open");
-    };
-  }
-}
-
-function openDrawer() {
-  if (sideDrawer) {
-    sideDrawer.classList.add("open");
-  }
-}
-
-initSideDrawer();
 initProcControls();
 
 /* ---------------------------------------------------------------- landing: Demo / Explore */
 app.classList.add("landing");
 intro.preload().catch(() => {});
 const leaveLanding = () => app.classList.remove("landing");
+
+const demoEl = $("demo"), demoV = $("demoV"), demoSkip = $("demoSkip");
+function closeDemo() {
+  if (demoEl) demoEl.classList.remove("on");
+  if (demoV) demoV.pause();
+  leaveLanding();
+}
+
 $("exploreBtn").onclick = () => {
   leaveLanding();
-  openDrawer();
+  openSearch();
 };
+
 $("demoBtn").onclick = () => {
-  intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
+  if (demoEl && demoV) {
+    demoEl.classList.add("on");
+    demoV.currentTime = 0;
+    demoV.play().catch(() => {});
+  } else {
+    leaveLanding();
+  }
 };
+
+if (demoSkip) demoSkip.onclick = closeDemo;
+if (demoV) demoV.onended = closeDemo;
 
 /* ---------------------------------------------------------------- past & future: the 3D depth view */
 let depthOpen = false;

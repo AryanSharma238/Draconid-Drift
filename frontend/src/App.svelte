@@ -95,33 +95,6 @@
     </div>
   </footer>
 
-  <aside id="side-drawer" aria-label="Explore sky targets">
-    <button id="drawer-toggle" type="button" aria-label="Toggle explore drawer" title="Toggle targets">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
-    </button>
-    <div class="drawer-inner">
-      <div class="drawer-header">
-        <div class="drawer-title-row">
-          <h2>Explore Stars</h2>
-          <button id="drawer-close" type="button" aria-label="Close drawer">×</button>
-        </div>
-        <p class="drawer-sub">Select moving challenge stars or explore random sky objects</p>
-        <button id="random-star-btn" type="button" class="random-btn">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-          Pick a Random Star
-        </button>
-      </div>
-      <div class="drawer-section">
-        <h3 class="section-title">Moving Stars (Challenge &amp; Movers)</h3>
-        <ul id="drawer-movers" class="star-list"></ul>
-      </div>
-      <div class="drawer-section">
-        <h3 class="section-title">Notable Sky Targets</h3>
-        <ul id="drawer-randoms" class="star-list"></ul>
-      </div>
-    </div>
-  </aside>
-
   <section id="about" aria-hidden="true">
     <div class="pg" data-page="challenge"><h1>NASA Space Apps 2026: Planet X &amp; SPHEREx</h1>
       <p>Built for the NASA Space Apps Challenge 2026. SPHEREx maps the whole sky once every six months in 102 bands of near-infrared light (0.75–5.0 µm), making it uniquely sensitive to molecules like water, carbon monoxide, and methane.</p>
@@ -148,5 +121,7 @@
       <p>Built for the NASA Space Apps Challenge 2026, Planet X and SPHEREx.</p></div>
   </section>
   <div id="toast" role="status"></div>
+  <div id="demo" aria-hidden="true"><video id="demoV" src="demo.mp4" playsinline preload="auto"></video>
+    <button id="demoSkip" type="button">Skip</button></div>
 </div>
 

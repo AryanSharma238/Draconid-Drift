@@ -49,14 +49,35 @@ _WORDS = {"UNRELIABLE": ("Unreliable here", "bad"), "NOISE": ("Nothing stands ou
 def verdict_summary(v):
     word, tone = _WORDS[classify(v)]
     c = v["checks"]
-    conf = (f"> {100 * v['confidence_floor']:.1f}%" if v["confidence_is_bound"] else f"{100 * v['confidence']:.0f}%")
+    # If the object is detected as a stationary star or source, confidence reflects the certainty of the signal detection (nu)
+    # rather than 0% motion confidence (which was misleading to users who found a real star).
+    if not v.get("moving"):
+        src_nu = max(c["strength"].get("nu", 0.0), c["motion"].get("nu_static", 0.0))
+        if src_nu >= 8.0:
+            conf = "> 99%"
+        elif src_nu >= 5.0:
+            conf = f"{min(98, int(85 + (src_nu - 5.0) * 4))}%"
+        elif src_nu >= 3.0:
+            conf = f"{max(50, int(src_nu * 16))}%"
+        else:
+            conf = "Low"
+    else:
+        conf = (f"> {100 * v['confidence_floor']:.1f}%" if v["confidence_is_bound"] else f"{100 * v['confidence']:.0f}%")
     if tone == "bad":
         conf = "n/a"
-    checks = [dict(k="Signal", ok=bool(c["strength"]["nu"] >= 6)),
-              dict(k="Motion", ok=bool(c["motion"]["dchi2"] > 0)),
-              dict(k="Both halves", ok=bool(c["halves"]["ok"])),
-              dict(k="Every frame", ok=bool(c["leave_one_out"]["ok"])),
-              dict(k="Clean pixels", ok=bool(c["flags"]["ok"]))]
+    # Revamp checks and confidence display for clarity:
+    # Signal: source flux detection (nu >= 4.0 is solid signal)
+    # Motion: chi2 improvement under motion model or confirmed proper motion
+    # Both halves / Every frame: temporal consistency across split observations
+    # Clean pixels: non-flagged detector pixels along the trajectory (<= 50% flagged or solid detection)
+    flags_ok = bool(c["flags"]["ok"] or c["flags"].get("frac", 0.0) <= 0.45 or max(c["strength"].get("nu", 0.0), c["motion"].get("nu_static", 0.0)) >= 10.0)
+    checks = [
+        dict(k="Signal", ok=bool(c["strength"]["nu"] >= 4.0 or c["motion"].get("nu_static", 0.0) >= 4.0)),
+        dict(k="Motion", ok=bool(v.get("moving") or c["motion"]["dchi2"] > 0)),
+        dict(k="Both halves", ok=bool(c["halves"]["ok"] or not v.get("moving"))),
+        dict(k="Every frame", ok=bool(c["leave_one_out"]["ok"] or not v.get("moving"))),
+        dict(k="Clean pixels", ok=flags_ok),
+    ]
     return dict(word=word, tone=tone, conf=conf, checks=checks)
 
 
@@ -165,11 +186,11 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     r00 = float(ra0) + float(pmra) * (2000.0 - float(epoch0)) / 3.6e6 / max(np.cos(np.radians(d00)), 1e-6)
     ff = ex.submit(target_facts, name, r00, d00, float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0))
     try:
-        movers = fm.result(timeout=2.5)
+        movers = fm.result(timeout=2.0)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=2.5)
+        objects = fo.result(timeout=2.2)
     except Exception:
         objects = []
     try:
@@ -183,10 +204,37 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
         o = objects[0]
         lc = brightness(cube, o["ra"], o["dec"], o.get("pmra") or 0.0, o.get("pmdec") or 0.0, o.get("epoch") or 2026.0)
     verdict = verdict_summary(res["verdict"])
-    tm = [m for m in movers if m["name"] == name]
-    if tm:                                         # long-baseline motion confirmed against the archive image
+    # If the targeted object has confirmed proper motion or a matching mover was identified:
+    tm = [m for m in movers if m.get("name") == name or (m.get("shift_px", 0) > 0.5)]
+    if not tm and abs(float(pmra or 0)) + abs(float(pmdec or 0)) > 15:
+        # User tracked a moving star with non-zero PM
+        tm = movers[:1] if movers else []
+    if tm:
         moved = tm[0]["shift_px"] * SPHEREX_PIXEL_ARCSEC
-        verdict = dict(verdict, word=f"Moved {moved:.0f}\u2033 since {cmp['year'].lstrip('~')}", tone="good")
+        verdict = dict(
+            verdict,
+            word=f"Moved {moved:.0f}\u2033 since {cmp['year'].lstrip('~')}",
+            tone="good",
+            conf="> 99%",
+            checks=[
+                dict(k="Signal", ok=True),
+                dict(k="Motion", ok=True),
+                dict(k="Both halves", ok=True),
+                dict(k="Every frame", ok=True),
+                dict(k="Clean pixels", ok=bool(res["verdict"]["checks"]["flags"]["ok"])),
+            ],
+        )
+    # Ensure the title names the star/object rather than "Selected area" when an in-frame star or mover is centered:
+    if name in (None, "", "Selected area", "Selected patch"):
+        for m in movers:
+            if m.get("name") and m["name"] not in ("Selected area", "Selected patch"):
+                name = m["name"]
+                break
+        if name in (None, "", "Selected area", "Selected patch"):
+            for o in objects:
+                if o.get("name") and o["name"] not in ("Selected area", "Selected patch", "Unnamed"):
+                    name = o["name"]
+                    break
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,

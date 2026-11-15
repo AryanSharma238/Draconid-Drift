@@ -60,6 +60,22 @@ def cached_stage(spec):
 
 req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, key="stage", default=None)
 
+# Support deep linking via URL query parameters (?ra=...&dec=...&fov=...)
+qp = st.query_params
+if "ra" in qp and "dec" in qp and S.result is None and S.seen is None:
+    try:
+        q_ra, q_dec = float(qp["ra"]), float(qp["dec"])
+        q_fov = float(qp.get("fov", 180.0))
+        q_spec = pipeline.framed(pipeline.Spec(
+            name="Linked location", ra=q_ra, dec=q_dec, pmra=0.0, pmdec=0.0,
+            epoch=float(MID_EPOCH), fov_arcsec=q_fov, detector="SPHEREx-D3"
+        ))
+        S.seen = f"url_{q_ra:.4f}_{q_dec:.4f}"
+        S.result = dict(cached_stage(q_spec), nonce=S.seen)
+        st.rerun()
+    except Exception as e:
+        pass
+
 if req and req.get("nonce") != S.seen:
     S.seen = req["nonce"]
     S.error = None

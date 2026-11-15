@@ -152,9 +152,9 @@ nav{display:flex;align-items:center;gap:6px}
 #blend{transition:none}
 #bar{opacity:1!important}
 
-/* while waiting for data: never show Aladin's half-loaded diamond tiles; the smooth picture fades in when ready */
+/* during transition and data fetching: keep the sky map and centered star vividly visible */
 #sky{transition:opacity .5s}
-#app[data-view=waiting] #sky,#app[data-view=settling] #sky{opacity:0}
+#app[data-view=waiting] #sky,#app[data-view=settling] #sky{opacity:1}
 #fw{transition:opacity .5s}
 
 /* leaving the panels for a new search: they dim out over the sky */

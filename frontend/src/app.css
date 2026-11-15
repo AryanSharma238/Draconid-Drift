@@ -21,6 +21,7 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 #sky-inner{position:absolute;inset:0;transform-origin:50% 50%;will-change:transform}
 #sky{position:absolute;inset:0}
 #sky .aladin-logo-container,.aladin-logo-container{display:none!important}
+#sky canvas{image-rendering:auto;filter:contrast(1.08) saturate(1.15) brightness(1.05)}
 /* Aladin paints its outside-the-map colour as (26,26,26). Multiplying by (186,216,255) lands exactly on the page colour. */
 #blend{position:absolute;inset:0;background:#13161A;pointer-events:none;transition:opacity .5s}
 #app:not([data-view=home]) #blend{opacity:0}
@@ -155,7 +156,7 @@ nav{display:flex;align-items:center;gap:6px}
 .lab h2{font-weight:800;letter-spacing:-.01em}
 .blk h3{font-weight:600;font-size:13px}
 #brand{font-weight:700;font-size:18px}
-#smooth{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .35s;z-index:1}#smooth.on{opacity:1}
+#smooth{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .2s ease-out;z-index:1;filter:contrast(1.08) saturate(1.15) brightness(1.05)}#smooth.on{opacity:1}
 #sky,#sky *,#sky-clip{cursor:default!important}#sky .aladin-reticleCanvas,#sky .aladin-reticle{display:none!important}
 
 #blend{transition:none}

@@ -139,12 +139,12 @@
   async function refreshSmooth() {
     const my = ++smoothId;
     if (smoothCv) smoothCv.classList.remove("on");
-    if (view !== "home" || !sky || sky.fov() > 2) return;
+    if (view !== "home" || !sky || sky.fov() > 6) return;
     const [r, d] = sky.center(),
-      w = Math.round(sky.W / 1.5),
-      h = Math.round(sky.H / 1.5);
+      w = Math.round(sky.W * 0.8),
+      h = Math.round(sky.H * 0.8);
     try {
-      const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, {});
+      const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, { gain: 1.05, gamma: 0.95 });
       if (my !== smoothId || view !== "home") return;
       smoothCv.width = w;
       smoothCv.height = h;
@@ -1031,7 +1031,7 @@
       true
     );
     window.addEventListener("pointerup", () => {
-      if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 200);
+      if (view === "home" && sky.fov() < 10) setTimeout(refreshSmooth, 80);
     });
     const homeOk = () => view === "home" && !busy && !searching && !aboutPage;
     let tipUntil = 0,
@@ -1079,7 +1079,7 @@
         clearTimeout(wt);
         if (smoothCv) smoothCv.classList.remove("on");
         smoothId++;
-        wt = setTimeout(refreshSmooth, 300);
+        wt = setTimeout(refreshSmooth, 100);
       },
       { capture: true, passive: false }
     );

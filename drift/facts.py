@@ -77,7 +77,7 @@ def simbad_row(ra, dec, radius_arcsec=15.0):
     server is slow, so famous objects come from a well-cited-only query and anything else from a plain one.)"""
     from concurrent.futures import ThreadPoolExecutor
     from .naming import _tap
-    cols = "main_id, otype, sp_type, plx_value, rvz_redshift, pmra, pmdec, galdim_majaxis AS majax, nbref"
+    cols = "oid, main_id, otype, sp_type, plx_value, rvz_redshift, pmra, pmdec, galdim_majaxis AS majax, nbref"
     cone = f"1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_arcsec / 3600:.6f}))"
     with ThreadPoolExecutor(2) as ex:
         a = ex.submit(_tap, f"SELECT TOP 50 {cols} FROM basic WHERE {cone} AND nbref >= 50", 4.0)
@@ -86,6 +86,26 @@ def simbad_row(ra, dec, radius_arcsec=15.0):
     if not rows:
         return None
     return max(rows, key=lambda r: int(r.get("nbref") or 0))
+
+
+def catalogue_distance_ly(oid):
+    """Median of SIMBAD's measured distances (Cepheids, tip of the red giant branch, ...) in light years, or None."""
+    from .naming import _tap
+    try:
+        oid = int(oid)
+    except (TypeError, ValueError):
+        return None
+    rows = _tap(f"SELECT dist, unit FROM mesDistance WHERE oidref = {oid}", 4.0) or []
+    pc = []
+    for r in rows:
+        d, u = _f(r, "dist"), str(r.get("unit") or "").strip().strip('"').lower()
+        if d and d > 0:
+            pc.append(d * {"mpc": 1e6, "kpc": 1e3, "pc": 1.0}.get(u, float("nan")))
+    pc = [p for p in pc if math.isfinite(p)]
+    if not pc:
+        return None
+    pc.sort()
+    return pc[len(pc) // 2] * LY_PER_PC
 
 
 def describe(row):
@@ -111,11 +131,16 @@ def describe(row):
         if pmra is not None and pmdec is not None:
             out["motion_arcsec_yr"] = math.hypot(pmra, pmdec) / 1000.0
     else:
-        if z is not None and z > 0:
+        if z is not None:
             out["redshift"] = z
-            lb = lookback_years(z)
-            if lb:
-                out["light_years_ago"] = lb
+        lb = lookback_years(z) if z is not None and z > 0.003 else None
+        if lb is None:                         # nearby galaxies (or ones moving towards us, like Andromeda):
+            ly = catalogue_distance_ly(row.get("oid"))   # redshift says little, use measured distances
+            if ly:
+                out["distance_ly"] = ly
+                lb = ly
+        if lb:
+            out["light_years_ago"] = lb
         if size:
             out["size_arcmin"] = size
     return out

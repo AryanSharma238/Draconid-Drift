@@ -71,8 +71,8 @@ if req and req.get("nonce") != S.seen:
             payload = build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, spec.epoch)
             payload["nonce"] = req["nonce"]
             S.result = payload
-        except pipeline.DataFetchError:
-            S.result, S.error = None, "No SPHEREx images here yet. Try another spot."
+        except pipeline.DataFetchError as e:
+            S.result, S.error = None, f"No SPHEREx images here yet ({e}). Try another spot."
         except Exception as e:  # keep the page alive
-            S.result, S.error = None, f"Something went wrong ({type(e).__name__})."
+            S.result, S.error = None, f"Something went wrong ({type(e).__name__}: {e})."
     st.rerun()

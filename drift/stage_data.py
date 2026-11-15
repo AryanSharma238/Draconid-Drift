@@ -82,8 +82,12 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0):
     sm = smoothed_frames(cube)
     p = stretch_params(sm)
     cmp = COMPARE.get(cube.detector, DEFAULT_COMPARE)
-    near = np.isfinite(cube.wl) & (np.abs(cube.wl - cmp["um"]) < 0.5)   # show the frames at the comparison wavelength
-    order = [i for i in np.argsort(cube.mjd) if near[i]] if near.sum() >= 10 else list(np.argsort(cube.mjd))
+    # Prefer frames close to the archival comparison wavelength (bandpass matching), but fall back to all frames
+    near = np.isfinite(cube.wl) & (np.abs(cube.wl - cmp["um"]) < 0.6)
+    if near.sum() >= 6:
+        order = [i for i in np.argsort(cube.mjd) if near[i]]
+    else:
+        order = list(np.argsort(cube.mjd))
     frames, marks, dates, wl = [], [], [], []
     for i in order:
         frames.append(to_dark_jpeg_b64(sm[i], p))

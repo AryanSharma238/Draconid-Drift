@@ -326,7 +326,7 @@ const geom = () => {
 };
 async function tryReveal() {
   const res = args.result;
-  if (!req || !req.arrived || view === "view" || view === "settling") return;
+  if (!req || view === "view" || view === "settling") return;
   if (args.error) { stopProgressBar(false); toast(args.error); return abortHome(); }
   if (!res || res.nonce !== req.nonce) return;
   stopProgressBar(true);

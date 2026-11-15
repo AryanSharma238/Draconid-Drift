@@ -58,10 +58,16 @@ nav{display:flex;align-items:center;gap:6px}
 #app.searching #veil{opacity:1;pointer-events:auto}
 
 
-/* loading ring while the data arrives - keep centered in the viewport */
-#beacon{position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;border:1.5px solid var(--wine-hi);opacity:0;pointer-events:none;z-index:9}
-#app[data-view=waiting] #beacon{animation:breathe 1.8s ease-in-out infinite}
-@keyframes breathe{0%,100%{opacity:.15;transform:scale(.8)}50%{opacity:.9;transform:scale(1.15)}}
+/* loading ring and status centered in the screen */
+#beacon{position:absolute;left:50%;top:50%;width:64px;height:64px;transform:translate(-50%,-50%);border-radius:50%;border:1.5px solid var(--wine-hi);opacity:0;pointer-events:none;z-index:9}
+#app[data-view=waiting] #beacon,#app[data-view=settling] #beacon{animation:breathe 1.8s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.15;transform:translate(-50%,-50%) scale(.8)}50%{opacity:.9;transform:translate(-50%,-50%) scale(1.15)}}
+
+/* status text and progress bar sit below the beacon */
+#status{position:absolute;left:50%;top:calc(50% + 46px);transform:translateX(-50%);font-size:14px;color:rgba(255,255,255,.8);opacity:0;transition:opacity .4s;pointer-events:none;z-index:9;text-shadow:0 1px 6px rgba(0,0,0,.8);white-space:nowrap}
+#prog-wrap{position:absolute;left:50%;top:calc(50% + 72px);transform:translateX(-50%);width:min(260px,65vw);height:4px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden;opacity:0;transition:opacity .4s;pointer-events:none;z-index:9}
+#prog-bar{width:0%;height:100%;background:linear-gradient(90deg,var(--wine-hi),#c58d96);border-radius:4px;transition:width .2s ease-out}
+#app[data-view=waiting] #status,#app[data-view=waiting] #prog-wrap,#app[data-view=settling] #status,#app[data-view=settling] #prog-wrap{opacity:1}
 
 /* ---------- page two ---------- */
 #page2{position:absolute;left:0;right:0;top:var(--bar);bottom:84px;padding:0 clamp(14px,2vw,28px);display:grid;grid-template-columns:1fr 1fr .82fr;gap:clamp(12px,1.4vw,20px);align-items:stretch;align-content:center;opacity:0;pointer-events:none;z-index:5}
@@ -123,10 +129,6 @@ nav{display:flex;align-items:center;gap:6px}
 #app[data-view=flying] #sel{transition:opacity .9s;opacity:0}
 #tip{position:absolute;left:0;top:0;padding:7px 12px;border-radius:10px;background:#7A4A51;color:rgba(255,255,255,.88);font-size:13px;white-space:nowrap;opacity:0;pointer-events:none;z-index:12;transition:opacity .35s}
 #tip.on{opacity:1}
-#status{position:absolute;left:50%;top:calc(50% + 52px);transform:translateX(-50%);font-size:14px;color:rgba(255,255,255,.7);opacity:0;transition:opacity .4s;pointer-events:none;z-index:9;text-shadow:0 1px 6px rgba(0,0,0,.8)}
-#prog-wrap{position:absolute;left:50%;top:calc(50% + 78px);transform:translateX(-50%);width:min(260px,65vw);height:4px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden;opacity:0;transition:opacity .4s;pointer-events:none;z-index:9}
-#prog-bar{width:0%;height:100%;background:linear-gradient(90deg,var(--wine-hi),#c58d96);border-radius:4px;transition:width .2s ease-out}
-#app[data-view=waiting] #status,#app[data-view=waiting] #prog-wrap{opacity:1}
 /* the sky lands in the SPHEREx panel, so that panel is the one that is "already there" */
 #pWise{opacity:0;transform:translateY(10px);background:#0d0f12;border-color:rgba(122,74,81,.4);transition:opacity .6s ease,transform .8s cubic-bezier(.2,.8,.2,1)}
 #pWise .lab{opacity:1}

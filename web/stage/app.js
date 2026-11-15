@@ -306,7 +306,8 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 900);
+  // Fly smoothly into the star in 700ms while backend fetches data in parallel
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 700);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
@@ -316,18 +317,18 @@ function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
   if (!bar) return;
-  bar.style.width = "0%";
-  let progress = 0;
+  // Start bar already mostly full (65%) during flight so the user never perceives a freeze
+  bar.style.width = "65%";
+  let progress = 65;
   const startT = performance.now();
-  const duration = 1800; // 1.8 seconds smooth linear/ease ramp
+  const duration = 1200; // 1.2 seconds ramp from 65% to 96%
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
-    // Smooth ramp reaching 95% at 1.8s
-    progress = t * 95;
-    bar.style.width = Math.min(progress, 96) + "%";
+    progress = 65 + t * 31; // reaches 96%
+    bar.style.width = Math.min(progress, 97) + "%";
     if (t >= 1) { clearInterval(progInterval); progInterval = null; }
-  }, 30);
+  }, 25);
 }
 function stopProgressBar(complete = false) {
   if (progInterval) { clearInterval(progInterval); progInterval = null; }
@@ -335,7 +336,7 @@ function stopProgressBar(complete = false) {
   if (!bar) return;
   if (complete) {
     bar.style.width = "100%";
-    setTimeout(() => { bar.style.width = "0%"; }, 250);
+    setTimeout(() => { bar.style.width = "0%"; }, 200);
   } else {
     bar.style.width = "0%";
   }
@@ -361,16 +362,16 @@ async function tryReveal() {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
         Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
       const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 300))]);
+      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 200))]);
     } catch (e) { return null; }
   })();
 
   const { W, H, S, k, A, dx, dy } = geom();
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
-  setTimeout(() => app.classList.add("shown"), 80);
+  setTimeout(() => app.classList.add("shown"), 40);
   
   // Animate the squish transition immediately without waiting on archive image tiles
-  const tweenPromise = tween(380, t => {
+  const tweenPromise = tween(300, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
     inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
     clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;

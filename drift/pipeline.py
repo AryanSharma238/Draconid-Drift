@@ -127,7 +127,7 @@ EC2_MAX_FRAMES = 40   # the server sends an even-in-time subset; more frames add
 def _get_ec2_client() -> httpx.Client:
     global _EC2_CLIENT
     if _EC2_CLIENT is None:
-        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(30.0, connect=0.6))
+        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(30.0, connect=3.0))
     return _EC2_CLIENT
 
 
@@ -245,7 +245,13 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
 
     cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector)
     if cube is None:
-        cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector)
+        try:
+            cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector)
+        except Exception:
+            # If direct S3 DNS is unreachable locally, re-attempt EC2 tunnel with a slightly wider connect timeout
+            cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector)
+            if cube is None:
+                raise DataFetchError(f"No usable SPHEREx {spec.detector} frames could be retrieved at RA={ra:.4f}°, Dec={dec:.4f}°")
 
     if progress:
         progress(4, 4)

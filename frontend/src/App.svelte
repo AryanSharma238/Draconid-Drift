@@ -1079,20 +1079,19 @@
       const s0 = sel;
       sel = null;
       selOn = false;
-      const moved = selMoved;
       selMoved = false;
 
       const r = rect();
       let l, r_, t, b, isClick;
-      if (s0 && moved) {
+      if (s0) {
         l = Math.min(s0.x0, s0.x1);
         r_ = Math.max(s0.x0, s0.x1);
         t = Math.min(s0.y0, s0.y1);
         b = Math.max(s0.y0, s0.y1);
-        isClick = r_ - l < 8 || b - t < 8;
+        isClick = r_ - l < 8 && b - t < 8;
       } else {
-        const x = (clientX != null ? clientX : (s0 ? s0.x0 + r.left : r.left + r.width / 2)) - r.left;
-        const y = (clientY != null ? clientY : (s0 ? s0.y0 + r.top : r.top + r.height / 2)) - r.top;
+        const x = (clientX != null ? clientX : r.left + r.width / 2) - r.left;
+        const y = (clientY != null ? clientY : r.top + r.height / 2) - r.top;
         l = r_ = x;
         t = b = y;
         isClick = true;
@@ -1100,27 +1099,20 @@
 
       const cx = (l + r_) / 2,
         cy = (t + b) / 2;
-      const c = sky.pix2world(cx, cy);
-      if (!c) {
-        return toast("Keep the area inside the map.");
+      let c = sky.pix2world(cx, cy);
+      if (!c || !isFinite(c[0]) || !isFinite(c[1])) {
+        c = sky.center();
+      }
+      if (!c || !isFinite(c[0]) || !isFinite(c[1])) {
+        c = [0, 0];
       }
 
-      let side = 180;
-      if (isClick) {
-        side = Math.min(600, Math.max(180, Math.round(sky.fov() * 3600 * 0.04)));
-      } else {
-        const L = sky.pix2world(l, cy),
-          R = sky.pix2world(r_, cy),
-          T = sky.pix2world(cx, t),
-          B = sky.pix2world(cx, b);
-        if (!L || !R || !T || !B) {
-          return toast("Keep the area inside the map.");
-        }
-        side = sepDeg(T, B) * 3600;
-        if (side > 5400) {
-          return toast(
-            `That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`
-          );
+      // Calculate angular FoV from box size, clamped to valid SPHEREx field (120" to 1800")
+      let side = 300;
+      if (s0 && !isClick) {
+        const maxPx = Math.max(Math.abs(s0.x1 - s0.x0), Math.abs(s0.y1 - s0.y0));
+        if (maxPx > 6 && sky && sky.W) {
+          side = Math.min(1800, Math.max(120, Math.round((maxPx / sky.W) * sky.fov() * 3600)));
         }
       }
 
@@ -1130,7 +1122,7 @@
         targetObj = null;
 
       // Snap to nearest catalog star / famous star if clicked near one
-      const snapRadius = isClick ? Math.max(0.2, sky.fov() * 0.035) : Math.max(side / 7200, 0.08);
+      const snapRadius = Math.max(0.35, (side / 3600) * 1.5);
       const catList = CATALOG && CATALOG.length ? CATALOG : FAMOUS;
       if (catList && catList.length) {
         let best = null,
@@ -1150,53 +1142,15 @@
         }
       }
 
-      // If no catalog star was within snap radius, sample the pixel peak
-      if (!targetObj) {
-        try {
-          const sw = 48,
-            sh = 48;
-          const cutout = await Promise.race([
-            renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {}),
-            new Promise((res) => setTimeout(() => res(null), 350)),
-          ]);
-          if (cutout) {
-            const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
-            let maxB = 0,
-              bestX = sw / 2,
-              bestY = sh / 2;
-            for (let py = 0; py < sh; py++) {
-              for (let px = 0; px < sw; px++) {
-                const idx = (py * sw + px) * 4;
-                const bright = data[idx] + data[idx + 1] + data[idx + 2];
-                if (bright > maxB) {
-                  maxB = bright;
-                  bestX = px;
-                  bestY = py;
-                }
-              }
-            }
-            if (maxB > 60) {
-              const fracX = (bestX + 0.5 - sw / 2) / sw,
-                fracY = (sh / 2 - (bestY + 0.5)) / sh;
-              const degW = side / 3600;
-              const dRa = (-fracX * degW) / Math.cos((c[1] * Math.PI) / 180),
-                dDec = fracY * degW;
-              targetRa = ((c[0] + dRa) % 360 + 360) % 360;
-              targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-            }
-          }
-        } catch (err) {}
-      }
-
       go({
-        key: "custom",
+        key: targetObj && targetObj.key !== "custom" ? targetObj.key : "custom",
         name: targetName,
         ra: targetRa,
         dec: targetDec,
         pmra: targetObj ? targetObj.pmra || 0 : 0,
         pmdec: targetObj ? targetObj.pmdec || 0 : 0,
         epoch: targetObj ? targetObj.epoch || midEpoch : midEpoch,
-        detector: "SPHEREx-D3",
+        detector: targetObj && targetObj.detector ? targetObj.detector : "SPHEREx-D3",
         fov: Math.max(60, side),
       });
     }
@@ -1245,7 +1199,6 @@
 
     const endSel = (e) => {
       if (!sel) return;
-      if (e.button !== 2 && e.button !== 0) return;
       stop(e);
       finishSelection(e.clientX, e.clientY);
     };

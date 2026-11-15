@@ -69,14 +69,14 @@ nav{display:flex;align-items:center;gap:6px}
 #target-dot::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid rgba(255,255,255,.6);animation:pulse-dot 1.4s ease-out infinite}
 @keyframes pulse-dot{0%{transform:scale(.7);opacity:1}100%{transform:scale(1.8);opacity:0}}
 
-/* side-of-screen progress bar with percentage completed (EC2 / TAP API) */
-#side-prog{position:absolute;right:28px;top:50%;transform:translateY(-50%);width:min(250px,65vw);padding:14px 16px;border-radius:16px;background:rgba(19,22,26,.82);border:1px solid rgba(255,255,255,.1);backdrop-filter:blur(16px);opacity:0;transition:opacity .4s;pointer-events:none;z-index:9;box-shadow:0 12px 32px rgba(0,0,0,.45)}
-#side-prog-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
-#side-prog-pct{font-size:18px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-#side-prog-label{font-size:12px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#prog-wrap{width:100%;height:5px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden}
-#prog-bar{width:0%;height:100%;background:linear-gradient(90deg,var(--wine-hi),#c58d96);border-radius:4px;transition:width .16s ease-out}
-#app[data-view=waiting] #side-prog,#app[data-view=settling] #side-prog{opacity:1}
+/* corner percent readout: clean white text in the bottom right corner */
+#corner-prog{position:absolute;right:32px;bottom:32px;font-family:var(--sans);font-size:16px;font-weight:600;letter-spacing:-.01em;color:#ffffff;background:rgba(19,22,26,.72);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);padding:9px 16px;border-radius:12px;opacity:0;transition:opacity .35s ease;pointer-events:none;z-index:25;box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:nowrap}
+#corner-prog .pct{font-weight:700;color:#ffffff;font-variant-numeric:tabular-nums;margin-right:5px}
+#corner-prog .sub{font-weight:400;color:rgba(255,255,255,.78)}
+#app[data-view=waiting] #corner-prog,#app[data-view=settling] #corner-prog{opacity:1}
+
+/* hide the old central progress bar & old side progress bar */
+#prog-wrap,#side-prog{display:none!important}
 
 /* ---------- page two ---------- */
 #page2{position:absolute;left:0;right:0;top:var(--bar);bottom:84px;padding:0 clamp(14px,2vw,28px);display:grid;grid-template-columns:1fr 1fr .82fr;gap:clamp(12px,1.4vw,20px);align-items:stretch;align-content:center;opacity:0;pointer-events:none;z-index:5}

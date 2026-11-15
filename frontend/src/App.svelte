@@ -1363,14 +1363,9 @@
     Right-click and drag to select an area
   </div>
   <div id="beacon" aria-hidden="true"></div>
-  <div id="side-prog" role="status" aria-live="polite">
-    <div id="side-prog-head">
-      <span id="side-prog-pct">{Math.round(progWidth)}%</span>
-      <span id="side-prog-label">Fetching from TAP API · EC2</span>
-    </div>
-    <div id="prog-wrap" aria-hidden="true">
-      <div id="prog-bar" bind:this={progBarEl} style="width:{progWidth}%"></div>
-    </div>
+  <div id="corner-prog" role="status" aria-live="polite">
+    <span class="pct">{Math.round(progWidth)}%</span>
+    <span class="sub">done gathering</span>
   </div>
   <div id="target-dot" class:on={targetDotOn} style={targetDotStyle} aria-hidden="true"></div>
   <div id="veil" onclick={() => closeSearch()}></div>

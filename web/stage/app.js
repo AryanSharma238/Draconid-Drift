@@ -318,30 +318,30 @@ async function go(item) {
 let progInterval = null;
 function startProgressBar() {
   stopProgressBar();
-  const bar = $("prog-bar");
-  if (!bar) return;
-  bar.style.width = "0%";
-  let progress = 0;
+  const cp = $("corner-pct");
+  if (cp) cp.textContent = "5%";
   const startT = performance.now();
   const duration = 2800; // Continuous 2.8s smooth pacing matching the 3-second transition
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
-    // Smooth ease-out ramp to 97%
-    progress = smooth(t) * 97;
-    bar.style.width = Math.min(progress, 98) + "%";
-    if (t >= 1) { clearInterval(progInterval); progInterval = null; }
+    const progress = Math.round(5 + smooth(t) * 92);
+    if (cp) cp.textContent = Math.min(progress, 98) + "%";
+    if (t >= 1) {
+      clearInterval(progInterval); progInterval = null;
+      if (args.result && view === "waiting") tryReveal();
+    }
   }, 30);
 }
 function stopProgressBar(complete = false) {
   if (progInterval) { clearInterval(progInterval); progInterval = null; }
-  const bar = $("prog-bar");
-  if (!bar) return;
+  const cp = $("corner-pct");
+  if (!cp) return;
   if (complete) {
-    bar.style.width = "100%";
-    setTimeout(() => { bar.style.width = "0%"; }, 350);
+    cp.textContent = "100%";
+    setTimeout(() => { cp.textContent = "0%"; }, 400);
   } else {
-    bar.style.width = "0%";
+    cp.textContent = "0%";
   }
 }
 

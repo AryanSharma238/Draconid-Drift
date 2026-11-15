@@ -359,6 +359,7 @@ async function unsquish() {
 
 /* ---------------------------------------------------------------- page two content */
 const hasPM = res => Math.hypot(res.pmra || 0, res.pmdec || 0) > 50;     // a ring only helps for real movers
+const escHtml = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 function fillPage(res) {
   $("iName").textContent = res.name;
   const [a, b] = sexa(res.ra, res.dec);
@@ -367,6 +368,22 @@ function fillPage(res) {
   $("iVerdict").innerHTML = `<div class="chip tone-${v.tone}"><i></i>${v.word}</div>` +
     `<div class="conf">Confidence <b>${v.conf}</b></div>` +
     `<div class="dots">${v.checks.map(c => `<span class="${c.ok ? "ok" : "no"}"><em></em>${c.k}</span>`).join("")}</div>`;
+  const objs = Array.isArray(res.objects) ? res.objects : [];
+  const box = $("iObjs");
+  if (!objs.length) {
+    box.className = "empty";
+    box.textContent = "Nothing here yet";
+  } else {
+    box.className = "obj-list";
+    box.innerHTML = objs.map(o => {
+      const sp = o.sp_type ? ` <span class="obj-sp">· ${escHtml(o.sp_type)}</span>` : "";
+      const conf = o.cls && o.cls !== "unclear" && o.conf ? `<span class="obj-conf">${escHtml(o.conf)}</span>` : "";
+      return `<div class="obj-card" data-cls="${escHtml(o.cls || "unclear")}">` +
+        `<div class="obj-top"><span class="obj-nm">${escHtml(o.name)}</span><span class="obj-rel" title="Brightness relative to brightest object in frame">${escHtml(o.rel_pct || Math.round((o.rel || 1) * 100) + "%")}</span></div>` +
+        `<div class="obj-sub"><span class="obj-cls"><i></i>${escHtml(o.label || "Unclear")}${sp}</span>${conf}</div>` +
+        `</div>`;
+    }).join("");
+  }
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
 }
@@ -609,7 +626,7 @@ async function remote(q, my, have) {
   const cap = q[0].toUpperCase() + q.slice(1), vars = [...new Set([q, cap, q.toUpperCase()])];
   const like = vars.flatMap(v => [`'${esc(v)}%'`, `'NAME ${esc(v)}%'`, `'* ${esc(v)}%'`, `'V* ${esc(v)}%'`]).map(p => `id LIKE ${p}`).join(" OR ");
   const adql = `SELECT TOP 8 main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis FROM basic JOIN ident ON oid = oidref WHERE ${like}`;
-  const simbad = timed("https://simbad.harvard.edu/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 7000)
+  const simbad = timed("https://simbad.cfa.harvard.edu/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 7000)
     .then(r => r.json()).then(j => (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "", size: x[6] || 0 })))
     .catch(() => []);
   const mirrors = ["https://cds.unistra.fr/cgi-bin/nph-sesame/-oI/SNV?", "https://vizier.cfa.harvard.edu/viz-bin/nph-sesame/-oI/SNV?", "https://vizier.idia.ac.za/viz-bin/nph-sesame/-oI/SNV?"];

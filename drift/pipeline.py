@@ -65,14 +65,21 @@ class Spec:
 
 
 WISE_EPOCH = 2010.5
+TMASS_EPOCH = 2000.0
+FRAME_FACTOR = 3.0      # field = 3x the distance a star moved since the comparison image (plus a margin)
+
+
+def compare_epoch(detector: str) -> float:
+    """Epoch of the archival comparison image: 2MASS K (~2000) for D1-D3, AllWISE (2010.5) for D4-D6."""
+    return TMASS_EPOCH if _det_int(detector) <= 3 else WISE_EPOCH
 
 
 def framed(spec: Spec) -> Spec:
-    """Frame a moving target so its AllWISE (2010) position is the centre and its SPHEREx position is
-    inside too: the field grows to 2.4x the distance travelled since 2010 (plus a margin) when needed."""
+    """Frame a moving target so its position in the comparison image is the centre and its SPHEREx position
+    is inside too: the field grows to FRAME_FACTOR x the distance travelled (plus a margin) when needed."""
     import dataclasses
-    shift = np.hypot(spec.pmra, spec.pmdec) / 1000.0 * (MID_EPOCH - WISE_EPOCH)        # arcsec
-    return dataclasses.replace(spec, fov_arcsec=float(max(spec.fov_arcsec, 2.4 * shift + 60.0)))
+    shift = np.hypot(spec.pmra, spec.pmdec) / 1000.0 * (MID_EPOCH - compare_epoch(spec.detector))   # arcsec
+    return dataclasses.replace(spec, fov_arcsec=float(max(spec.fov_arcsec, FRAME_FACTOR * shift + 60.0)))
 
 
 def spec_from_target(t: Target):
@@ -80,8 +87,8 @@ def spec_from_target(t: Target):
 
 
 def field_center(spec: Spec):
-    """Field centre = the target where AllWISE saw it (2010.5), so both datasets frame it the same way."""
-    return propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, WISE_EPOCH)
+    """Field centre = the target where the comparison survey saw it, so both datasets frame it the same way."""
+    return propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, compare_epoch(spec.detector))
 
 
 def _det_int(detector: str) -> int:
@@ -114,7 +121,7 @@ def load_cube(path):
 
 # --------------------------------------------------- EC2 + S3 fetchers ------
 _EC2_CLIENT: httpx.Client | None = None
-EC2_MAX_FRAMES = 120   # the server sends an even-in-time subset; more frames add transfer time, not detail
+EC2_MAX_FRAMES = 90   # the server sends an even-in-time subset; more frames add transfer time, not detail
 
 
 def _get_ec2_client() -> httpx.Client:
@@ -132,6 +139,8 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
             f"{EC2_BACKEND_URL}/api/cube",
             params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": EC2_MAX_FRAMES},
         )
+        if r.status_code == 404:
+            raise DataFetchError("no usable SPHEREx frames at this position")
         if r.status_code != 200:
             return None
         z = np.load(io.BytesIO(r.content), allow_pickle=False)
@@ -151,6 +160,13 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
             "EC2-S3",
             int(z["n_found"]),
         )
+    except DataFetchError:
+        raise
+    except httpx.TimeoutException as e:
+        # the server is up but slow: fetching everything again from here would be slower still
+        if isinstance(e, httpx.ConnectTimeout):
+            return None
+        raise DataFetchError("the data server took too long; try again in a moment") from e
     except Exception:
         return None
 

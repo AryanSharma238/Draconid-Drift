@@ -27,11 +27,15 @@ function hpxContinuous(ra, dec, nside) {
 }
 
 const tileCache = new Map();
+let active = 0; const waiting = [];
+const slot = () => new Promise(r => { if (active < 6) { active++; r(); } else waiting.push(r); });
+const free = () => { const n = waiting.shift(); if (n) n(); else active--; };
 function loadTile(base, order, idx, slice = null, fmt = "jpg") {
   const key = base + order + "/" + idx + "_" + slice;
   if (tileCache.has(key)) return tileCache.get(key);
   const dir = Math.floor(idx / 10000) * 10000;
-  const p = new Promise(res => {
+  const p = slot().then(() => new Promise(res0 => {
+    const res = v => { free(); res0(v); };
     const im = new Image(); im.crossOrigin = "anonymous";
     im.onload = () => {
       const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
@@ -39,9 +43,9 @@ function loadTile(base, order, idx, slice = null, fmt = "jpg") {
       res({ w: c.width, h: c.height, d: g.getImageData(0, 0, c.width, c.height).data });
     };
     let tries = 0;
-    im.onerror = () => { if (++tries < 3) setTimeout(() => { im.src = im.src.split('?')[0] + '?r=' + tries; }, 400 * tries); else { tileCache.delete(key); res(null); } };
+    im.onerror = () => { if (++tries < 4) setTimeout(() => { im.src = im.src.split('?')[0] + '?r=' + tries; }, 500 * tries); else { tileCache.delete(key); res(null); } };
     im.src = `${base}/Norder${order}/Dir${dir}/Npix${idx}${slice ? "_" + slice : ""}.${fmt}`;
-  });
+  }));
   tileCache.set(key, p);
   return p;
 }
@@ -77,17 +81,24 @@ function tanToSky(ra0, dec0, xi, eta) {
  */
 export async function renderCutout(survey, ra, dec, fovDeg, w, h, tweak = {}, opts = {}) {
   const order = survey.order, nsC = 2 ** order * 512;
-  const tiles = new Map();
-  await Promise.all(tilesFor(ra, dec, fovDeg * Math.hypot(1, h / w), order, 11).map(async i => tiles.set(i, await loadTile(survey.url, order, i, survey.slice, survey.fmt || "jpg"))));
+  const tiles = new Map(), parents = new Map();
+  const load = (o, i) => loadTile(survey.url, o, i, survey.slice, survey.fmt || "jpg");
+  await Promise.all(tilesFor(ra, dec, fovDeg * Math.hypot(1, h / w), order, 11).map(async i => tiles.set(i, await load(order, i))));
+  await Promise.all([...tiles].filter(([, t]) => !t).map(async ([i]) => { const p = i >> 2; if (!parents.has(p)) parents.set(p, await load(order - 1, p)); }));
   const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
   const g = cv.getContext("2d"), out = g.createImageData(w, h), od = out.data;
   const scale = fovDeg * R / w, gain = tweak.gain ?? 1, gam = tweak.gamma ?? 1, black = tweak.black ?? 0, mono = !!tweak.mono;
   const orient = opts.orient ?? 3;
   const px = (face, ix, iy) => {
     const n = nsC; ix = Math.min(Math.max(ix, 0), n - 1); iy = Math.min(Math.max(iy, 0), n - 1);
-    const t = tiles.get(face * 4 ** order + spread(ix >> 9) + 2 * spread(iy >> 9));
-    if (!t) return null;
+    let t = tiles.get(face * 4 ** order + spread(ix >> 9) + 2 * spread(iy >> 9));
     let x = ix & 511, y = iy & 511;
+    if (!t) {                                        // parent tile: same place at half the resolution
+      const px2 = ix >> 1, py2 = iy >> 1;
+      t = parents.get(face * 4 ** (order - 1) + spread(px2 >> 9) + 2 * spread(py2 >> 9));
+      if (!t) return null;
+      x = px2 & 511; y = py2 & 511;
+    }
     if (orient & 2) { const q = x; x = y; y = q; }
     if (orient & 4) x = 511 - x;
     const row = (orient & 1) ? y : 511 - y, o4 = (row * 512 + x) * 4;
@@ -125,6 +136,9 @@ export const SURVEYS = {
   wise: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1", order: 8 },
   tmass: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color", order: 9 },
   tmass8: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color", order: 8 },
+  tj: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/J", order: 9 },
+  th: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/H", order: 9 },
+  tk: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/K", order: 9 },
   w1: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order: 8 },
   w2: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order: 8 },
   spherex: slice => ({ url: "https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube", order: 5, slice, fmt: "png" }),

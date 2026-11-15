@@ -82,7 +82,7 @@ if req and req.get("nonce") != S.seen:
                 req["name"] = "Selected area"
             spec = pipeline.Spec(name=str(req.get("name") or "Selected area")[:60], ra=float(req["ra"]), dec=float(req["dec"]),
                                  pmra=float(req.get("pmra") or 0.0), pmdec=float(req.get("pmdec") or 0.0),
-                                 epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D4")
+                                 epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D3")
             spec = pipeline.framed(spec)
         try:
             payload = cached_stage(spec)

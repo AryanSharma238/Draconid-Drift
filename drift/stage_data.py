@@ -12,9 +12,12 @@ from .targets import mjd_to_year
 
 # The archival comparison image is taken at the SPHEREx wavelength: AllWISE W1 (3.4 um) for D4, W2 (4.6 um) for D5/D6.
 COMPARE = {
-    "SPHEREx-D4": dict(name="AllWISE", band="W1", um=3.4, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order=8, fmt="jpg"),
-    "SPHEREx-D5": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg"),
-    "SPHEREx-D6": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg"),
+    "SPHEREx-D1": dict(name="2MASS", band="J", um=1.24, url="https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/J", order=9, fmt="jpg", epoch=2000.0, year="~2000"),
+    "SPHEREx-D2": dict(name="2MASS", band="H", um=1.66, url="https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/H", order=9, fmt="jpg", epoch=2000.0, year="~2000"),
+    "SPHEREx-D3": dict(name="2MASS", band="K", um=2.16, url="https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/K", order=9, fmt="jpg", epoch=2000.0, year="~2000"),
+    "SPHEREx-D4": dict(name="AllWISE", band="W1", um=3.4, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order=8, fmt="jpg", epoch=2010.5, year="2010"),
+    "SPHEREx-D5": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg", epoch=2010.5, year="2010"),
+    "SPHEREx-D6": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg", epoch=2010.5, year="2010"),
 }
 DEFAULT_COMPARE = COMPARE["SPHEREx-D4"]
 SMOOTH_K = 5          # frames averaged per displayed frame (same observing burst only)
@@ -102,12 +105,17 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
         wl.append(None if not np.isfinite(cube.wl[i]) else round(float(cube.wl[i]), 2))
     ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
     try:
-        movers = find_movers(cube, dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0)))
+        movers = find_movers(cube, wise_epoch=cmp["epoch"], target=dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0)))
     except Exception:
         movers = []
+    verdict = verdict_summary(res["verdict"])
+    tm = [m for m in movers if m["name"] == name]
+    if tm:                                         # long-baseline motion confirmed against the archive image
+        moved = tm[0]["shift_px"] * SPHEREX_PIXEL_ARCSEC
+        verdict = dict(verdict, word=f"Moved {moved:.0f}\u2033 since {cmp['year'].lstrip('~')}", tone="good")
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
                 movers=movers,
                 detector=cube.detector, compare=cmp,
-                verdict=verdict_summary(res["verdict"]), source=cube.source)
+                verdict=verdict, source=cube.source)

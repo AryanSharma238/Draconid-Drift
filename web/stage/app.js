@@ -39,7 +39,11 @@ const MAPTONE = { mono: true, black: 0.10, gain: 1.25, gamma: 1.0 }, WISETONE = 
 const setView = v => { view = v; app.dataset.view = v; };
 
 /* ---------------------------------------------------------------- helpers */
-const MAS = 3.6e6, PX = 6.15, WISE_EPOCH = 2010.5;
+const MAS = 3.6e6, PX = 6.15, FRAME_FACTOR = 3.0;
+const detNum = d => +(String(d || "SPHEREx-D3").slice(-1)) || 3;
+// comparison image per SPHEREx detector: 2MASS K/H/J (~2000) for D1-D3, AllWISE (2010.5) for D4-D6 (same wavelength band)
+const compareFor = d => detNum(d) <= 3 ? { epoch: 2000.0, survey: [null, SURVEYS.tj, SURVEYS.th, SURVEYS.tk][detNum(d)] }
+                                       : { epoch: 2010.5, survey: detNum(d) === 4 ? SURVEYS.w1 : SURVEYS.w2 };
 function propagate(it, year) {
   const dt = year - (it.epoch ?? 2000);
   const dec1 = it.dec + (it.pmdec || 0) * dt / MAS;
@@ -177,13 +181,19 @@ let nonce = 0;
 // centre, zooming only as much as keeps it on screen; (2) zoom in while it glides diagonally to the centre,
 // landing exactly on the final view (no overshoot).
 const OFF = [0.13, -0.17];                           // where the target waits during the zoom, as a fraction of the view (x right, y up)
-function offsetOf(c, t) {                            // target relative to the view centre, degrees (x right = west, y up = north)
-  const cd = Math.cos(t[1] * Math.PI / 180); let dra = t[0] - c[0]; dra = ((dra + 540) % 360) - 180;
-  return [-dra * cd, t[1] - c[1]];
+function offsetOf(c, t) {                            // target relative to the view centre, degrees on the sky (x right = west, y up = north)
+  const R = Math.PI / 180, a0 = c[0] * R, d0 = c[1] * R, a = t[0] * R, d = t[1] * R;
+  const cosc = Math.sin(d0) * Math.sin(d) + Math.cos(d0) * Math.cos(d) * Math.cos(a - a0);
+  const xi = Math.cos(d) * Math.sin(a - a0) / cosc, eta = (Math.cos(d0) * Math.sin(d) - Math.sin(d0) * Math.cos(d) * Math.cos(a - a0)) / cosc;
+  return cosc > 0 ? [-xi / R, eta / R] : [180, 0];
 }
-function centreFor(t, off) {                         // the view centre that puts the target at screen offset off (degrees)
-  const cd = Math.max(Math.cos(t[1] * Math.PI / 180), 1e-3);
-  return [((t[0] + off[0] / cd) % 360 + 360) % 360, Math.max(-89.9, Math.min(89.9, t[1] - off[1]))];
+function centreFor(t, off) {                         // centre that puts the target at screen offset off (deg): a true step on the sphere
+  const R = Math.PI / 180, xi = off[0] * R, eta = -off[1] * R, a0 = t[0] * R, d0 = t[1] * R, rho = Math.hypot(xi, eta);
+  if (rho < 1e-12) return [t[0], t[1]];
+  const c = Math.atan(rho), sc = Math.sin(c), cc = Math.cos(c);
+  const dec = Math.asin(cc * Math.sin(d0) + eta * sc * Math.cos(d0) / rho);
+  const ra = a0 + Math.atan2(xi * sc, rho * Math.cos(d0) * cc - eta * Math.sin(d0) * sc);
+  return [((ra / R) % 360 + 360) % 360, dec / R];
 }
 async function flyTo(ra, dec, fov, dur) {
   const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
@@ -227,13 +237,14 @@ async function go(item) {
   if (busy) return; busy = true;
   closeSearch(true); closeAbout();
   req = Object.assign({}, item, { nonce: String(Date.now()) + Math.random().toString(36).slice(2, 6) });
-  const shift = Math.hypot(item.pmra || 0, item.pmdec || 0) / 1000 * (args.mid - WISE_EPOCH);   // arcsec moved since 2010
-  req.pos = propagate(item, WISE_EPOCH);                      // AllWISE position = centre of both panels
-  req.fieldDeg = fieldDeg(Math.max(item.fov || 180, 2.4 * shift + 60));
+  const cmpI = compareFor(item.detector);
+  const shift = Math.hypot(item.pmra || 0, item.pmdec || 0) / 1000 * (args.mid - cmpI.epoch);   // arcsec moved since the archive image
+  req.pos = propagate(item, cmpI.epoch);                     // archive-image position = centre of both panels
+  req.fieldDeg = fieldDeg(Math.max(item.fov || 180, FRAME_FACTOR * shift + 60));
   emit(Object.assign({ type: "go" }, req));
   setView("flying"); sky.haltSpin(); spinning = false; smoothId++; smoothCv.classList.remove("on");
   wiseCanvas = null; skyCanvas = null; makeOverlay(); app.classList.remove("smoothready");
-  const my = req.nonce, det = item.detector || "SPHEREx-D4";
+  const my = req.nonce, det = item.detector || "SPHEREx-D3";
   // 1) the SPHEREx all-sky map of the whole window, smoothed, to take over from Aladin's pixels as the zoom lands
   const cw = 768, ch = Math.round(cw * sky.H / sky.W);
   renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, {}).then(c => {
@@ -243,7 +254,7 @@ async function go(item) {
   }).catch(() => {});
   // 2) the archive image at the same wavelength, same window, for the left panel
   const f = $("pSpx").getBoundingClientRect(), pw = Math.min(560, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
-  req.wiseJob = { survey: det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, pw, ph };
+  req.wiseJob = { survey: cmpI.survey, pw, ph };
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 6500);
@@ -326,9 +337,9 @@ function fillPage(res) {
     `<div class="conf">Confidence <b>${v.conf}</b></div>` +
     `<div class="dots">${v.checks.map(c => `<span class="${c.ok ? "ok" : "no"}"><em></em>${c.k}</span>`).join("")}</div>`;
   $("wiseH").textContent = res.compare.name;
-  $("wiseCap").textContent = "2010";
+  $("wiseCap").textContent = res.compare.year || "2010";
 }
-const SPX_PSF = 9.0, WISE_PSF = { W1: 6.1, W2: 6.4 };   // arcsec FWHM
+const SPX_PSF = 9.0, WISE_PSF = { W1: 6.1, W2: 6.4, J: 2.9, H: 2.8, K: 2.9 };   // arcsec FWHM
 function paintWise(res) {
   const cv = $("wiseCv"), f = $("pWise").getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(f.width * d); cv.height = Math.round(f.height * d);
@@ -478,7 +489,7 @@ function showItems(list) {
   });
 }
 function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
-function choose(it) { go(Object.assign({ fov: 180, epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D4" }, it)); }
+function choose(it) { go(Object.assign({ fov: 180, epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it)); }
 
 function thumb(it, box) {
   const key = it.key + "|" + it.name;

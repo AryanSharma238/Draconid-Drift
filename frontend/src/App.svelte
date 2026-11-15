@@ -9,6 +9,7 @@
     WISETONE,
     SPX_PSF,
     WISE_PSF,
+    FRAME_FACTOR,
     smooth,
     clamp01,
     compareFor,
@@ -1060,26 +1061,8 @@
       { capture: true, passive: false }
     );
 
-    clipEl.addEventListener(
-      "contextmenu",
-      (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      },
-      true
-    );
-    window.addEventListener(
-      "contextmenu",
-      (e) => {
-        if (clipEl.contains(e.target)) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      },
-      true
-    );
-
     let sel = null;
+    let selMoved = false;
     const stop = (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -1090,124 +1073,91 @@
       selStyle = `left:${l}px;top:${t}px;width:${Math.abs(sel.x1 - sel.x0)}px;height:${Math.abs(sel.y1 - sel.y0)}px`;
     };
     const isRightClick = (e) => e.button === 2 || (e.button === 0 && e.ctrlKey);
-    clipEl.addEventListener(
-      "pointerdown",
-      (e) => {
-        if (!isRightClick(e)) {
-          if (homeOk() && e.button === 0) wake();
-          return;
-        }
-        stop(e);
-        if (!homeOk() || sel) return;
-        wake();
-        const r = rect();
-        sel = {
-          x0: e.clientX - r.left,
-          y0: e.clientY - r.top,
-          x1: e.clientX - r.left,
-          y1: e.clientY - r.top,
-        };
-        drawSel();
-        selOn = true;
-        tipDone = true;
-        tipOn = false;
-      },
-      true
-    );
-    clipEl.addEventListener(
-      "mousedown",
-      (e) => {
-        if (isRightClick(e)) stop(e);
-      },
-      true
-    );
-    window.addEventListener(
-      "pointermove",
-      (e) => {
-        if (!sel) return;
-        stop(e);
-        const r = rect(),
-          A = panelA(),
-          dx = e.clientX - r.left - sel.x0,
-          dy = e.clientY - r.top - sel.y0;
-        const w = Math.max(Math.abs(dx), Math.abs(dy) / A);
-        sel.x1 = sel.x0 + Math.sign(dx || 1) * w;
-        sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A;
-        drawSel();
-      },
-      true
-    );
-    window.addEventListener(
-      "mousemove",
-      (e) => {
-        if (sel) stop(e);
-      },
-      true
-    );
-    window.addEventListener(
-      "mouseup",
-      (e) => {
-        if (sel && isRightClick(e)) stop(e);
-      },
-      true
-    );
-    window.addEventListener(
-      "pointercancel",
-      () => {
-        if (sel) {
-          sel = null;
-          selOn = false;
-        }
-      },
-      true
-    );
-    window.addEventListener(
-      "pointerup",
-      async (e) => {
-        if (!sel || (e.button !== 2 && e.button !== 0)) return;
-        stop(e);
-        const s0 = sel;
-        sel = null;
-        selOn = false;
-        const l = Math.min(s0.x0, s0.x1),
-          r_ = Math.max(s0.x0, s0.x1),
-          t = Math.min(s0.y0, s0.y1),
-          b = Math.max(s0.y0, s0.y1);
-        const cx = (l + r_) / 2,
-          cy = (t + b) / 2;
-        const isClick = r_ - l < 4 || b - t < 4;
-        const c = sky.pix2world(cx, cy);
-        if (!c) {
+
+    async function finishSelection(clientX, clientY) {
+      if (!homeOk()) return;
+      const s0 = sel;
+      sel = null;
+      selOn = false;
+      const moved = selMoved;
+      selMoved = false;
+
+      const r = rect();
+      let l, r_, t, b, isClick;
+      if (s0 && moved) {
+        l = Math.min(s0.x0, s0.x1);
+        r_ = Math.max(s0.x0, s0.x1);
+        t = Math.min(s0.y0, s0.y1);
+        b = Math.max(s0.y0, s0.y1);
+        isClick = r_ - l < 8 || b - t < 8;
+      } else {
+        const x = (clientX != null ? clientX : (s0 ? s0.x0 + r.left : r.left + r.width / 2)) - r.left;
+        const y = (clientY != null ? clientY : (s0 ? s0.y0 + r.top : r.top + r.height / 2)) - r.top;
+        l = r_ = x;
+        t = b = y;
+        isClick = true;
+      }
+
+      const cx = (l + r_) / 2,
+        cy = (t + b) / 2;
+      const c = sky.pix2world(cx, cy);
+      if (!c) {
+        return toast("Keep the area inside the map.");
+      }
+
+      let side = 180;
+      if (isClick) {
+        side = Math.min(600, Math.max(180, Math.round(sky.fov() * 3600 * 0.04)));
+      } else {
+        const L = sky.pix2world(l, cy),
+          R = sky.pix2world(r_, cy),
+          T = sky.pix2world(cx, t),
+          B = sky.pix2world(cx, b);
+        if (!L || !R || !T || !B) {
           return toast("Keep the area inside the map.");
         }
-        let side = 180;
-        if (isClick) {
-          side = Math.min(900, Math.max(120, Math.round(sky.fov() * 3600 * 0.05)));
-        } else {
-          const L = sky.pix2world(l, cy),
-            R = sky.pix2world(r_, cy),
-            T = sky.pix2world(cx, t),
-            B = sky.pix2world(cx, b);
-          if (!L || !R || !T || !B) {
-            return toast("Keep the area inside the map.");
-          }
-          side = sepDeg(T, B) * 3600;
-          if (side > 5400) {
-            return toast(
-              `That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`
-            );
+        side = sepDeg(T, B) * 3600;
+        if (side > 5400) {
+          return toast(
+            `That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`
+          );
+        }
+      }
+
+      let targetRa = c[0],
+        targetDec = c[1],
+        targetName = "Selected area",
+        targetObj = null;
+
+      // Snap to nearest catalog star / famous star if clicked near one
+      const snapRadius = isClick ? Math.max(0.2, sky.fov() * 0.035) : Math.max(side / 7200, 0.08);
+      const catList = CATALOG && CATALOG.length ? CATALOG : FAMOUS;
+      if (catList && catList.length) {
+        let best = null,
+          bestDist = snapRadius;
+        for (const obj of catList) {
+          const d = sepDeg([obj.ra, obj.dec], c);
+          if (d < bestDist) {
+            bestDist = d;
+            best = obj;
           }
         }
+        if (best) {
+          targetRa = best.ra;
+          targetDec = best.dec;
+          targetName = best.name;
+          targetObj = best;
+        }
+      }
 
-        let targetRa = c[0],
-          targetDec = c[1],
-          targetName = "Selected area";
+      // If no catalog star was within snap radius, sample the pixel peak
+      if (!targetObj) {
         try {
           const sw = 48,
             sh = 48;
           const cutout = await Promise.race([
             renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {}),
-            new Promise((r) => setTimeout(() => r(null), 400)),
+            new Promise((res) => setTimeout(() => res(null), 350)),
           ]);
           if (cutout) {
             const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
@@ -1236,19 +1186,86 @@
             }
           }
         } catch (err) {}
-        go({
-          key: "custom",
-          name: targetName,
-          ra: targetRa,
-          dec: targetDec,
-          pmra: 0,
-          pmdec: 0,
-          epoch: midEpoch,
-          fov: Math.max(60, side),
-        });
-      },
-      true
-    );
+      }
+
+      go({
+        key: "custom",
+        name: targetName,
+        ra: targetRa,
+        dec: targetDec,
+        pmra: targetObj ? targetObj.pmra || 0 : 0,
+        pmdec: targetObj ? targetObj.pmdec || 0 : 0,
+        epoch: targetObj ? targetObj.epoch || midEpoch : midEpoch,
+        detector: "SPHEREx-D3",
+        fov: Math.max(60, side),
+      });
+    }
+
+    const startSel = (e) => {
+      if (!isRightClick(e)) {
+        if (homeOk() && e.button === 0) wake();
+        return;
+      }
+      stop(e);
+      if (!homeOk()) return;
+      wake();
+      const r = rect();
+      sel = {
+        x0: e.clientX - r.left,
+        y0: e.clientY - r.top,
+        x1: e.clientX - r.left,
+        y1: e.clientY - r.top,
+      };
+      selMoved = false;
+      drawSel();
+      selOn = true;
+      tipDone = true;
+      tipOn = false;
+    };
+
+    clipEl.addEventListener("pointerdown", startSel, true);
+    clipEl.addEventListener("mousedown", startSel, true);
+
+    const moveSel = (e) => {
+      if (!sel) return;
+      stop(e);
+      const r = rect(),
+        A = panelA(),
+        dx = e.clientX - r.left - sel.x0,
+        dy = e.clientY - r.top - sel.y0;
+      if (Math.hypot(dx, dy) > 3) selMoved = true;
+      const w = Math.max(Math.abs(dx), Math.abs(dy) / A);
+      sel.x1 = sel.x0 + Math.sign(dx || 1) * w;
+      sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A;
+      drawSel();
+    };
+
+    window.addEventListener("pointermove", moveSel, true);
+    window.addEventListener("mousemove", moveSel, true);
+
+    const endSel = (e) => {
+      if (!sel) return;
+      if (e.button !== 2 && e.button !== 0) return;
+      stop(e);
+      finishSelection(e.clientX, e.clientY);
+    };
+
+    window.addEventListener("pointerup", endSel, true);
+    window.addEventListener("mouseup", endSel, true);
+
+    const onCtxMenu = (e) => {
+      stop(e);
+      if (homeOk()) {
+        finishSelection(e.clientX, e.clientY);
+      }
+    };
+
+    clipEl.addEventListener("contextmenu", onCtxMenu, true);
+    window.addEventListener("contextmenu", (e) => {
+      if (clipEl && clipEl.contains(e.target)) {
+        onCtxMenu(e);
+      }
+    }, true);
   }
 
   onMount(async () => {

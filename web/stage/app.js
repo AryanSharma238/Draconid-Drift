@@ -306,7 +306,7 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2800);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 900);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
@@ -316,15 +316,15 @@ function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
   if (!bar) return;
-  bar.style.width = "5%";
-  let progress = 5;
+  bar.style.width = "10%";
+  let progress = 10;
   progInterval = setInterval(() => {
     // Smooth asymptotic progress while awaiting EC2 data (moves up to 92%)
-    if (progress < 40) progress += 8;
-    else if (progress < 70) progress += 4;
-    else if (progress < 92) progress += 1.5;
-    bar.style.width = Math.min(progress, 94) + "%";
-  }, 250);
+    if (progress < 60) progress += 18;
+    else if (progress < 85) progress += 6;
+    else if (progress < 94) progress += 2;
+    bar.style.width = Math.min(progress, 95) + "%";
+  }, 100);
 }
 function stopProgressBar(complete = false) {
   if (progInterval) { clearInterval(progInterval); progInterval = null; }
@@ -371,7 +371,7 @@ async function tryReveal() {
   setTimeout(() => app.classList.add("shown"), 150);
   
   // Animate the squish transition immediately without waiting on archive image tiles
-  const tweenPromise = tween(850, t => {
+  const tweenPromise = tween(450, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
     inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
     clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;
@@ -381,7 +381,7 @@ async function tryReveal() {
   await tweenPromise;
   paintWise(res);
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 40));
   clip.style.visibility = "hidden";
   setView("view"); startPlayer();
 }

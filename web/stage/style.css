@@ -137,3 +137,4 @@ nav{display:flex;align-items:center;gap:6px}
 .blk h3{font-weight:600;font-size:13px}
 #brand{font-weight:700;font-size:18px}
 #smooth{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .35s;z-index:1}#smooth.on{opacity:1}
+#sky,#sky *,#sky-clip{cursor:default!important}#sky .aladin-reticleCanvas,#sky .aladin-reticle{display:none!important}

@@ -7,7 +7,7 @@ from .movers import deep_stack
 from .naming import _tap, _clean, _readable, _nice_names, EXTENDED
 
 SPX_ARCSEC = 6.15
-MATCH_ARCSEC = 14.0
+MATCH_ARCSEC = 6.0
 BRIGHT_FRAC = 0.6          # unnamed sources at least this bright relative to the brightest are classified
 MAX_ITEMS = 10
 
@@ -126,6 +126,8 @@ def in_frame(cube, year=2026.0, stack=None):
     """List of dict(name, kind, ra, dec, size_arcsec, named, p). Always returns something when the frame has any source."""
     n, ny, nx = cube.cube.shape
     ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
+    from .clean import pixscale
+    SPX_ARCSEC = pixscale(cube)
     half = nx * SPX_ARCSEC / 3600 / 2
     from concurrent.futures import ThreadPoolExecutor
     cols = "oid, main_id, ra, dec, pmra, pmdec, otype, galdim_majaxis AS majax, nbref, sp_type, morph_type, plx_value, rvz_redshift"
@@ -168,6 +170,27 @@ def in_frame(cube, year=2026.0, stack=None):
     peaks = [p for p in peaks if 7 <= p[1] < nx - 7 and 7 <= p[2] < ny - 7]   # cut off by the edge: unmeasurable
     peaks = _clean_peaks(peaks, img, s)
     out, used = [], set()
+    # 0. the brightest thing in the frame, and any saturated core (its centre is masked, so it never shows up as a
+    #    peak): whatever SIMBAD has there is listed first, however few papers mention it
+    from scipy.ndimage import label as _label, center_of_mass as _com, gaussian_filter as _gf
+    spots = []
+    lab, nlab = _label(~np.isfinite(s))
+    for i in range(1, nlab + 1):
+        m = lab == i
+        if 2 <= m.sum() <= 900:
+            cy, cx = _com(m)
+            if 3 <= cx < nx - 3 and 3 <= cy < ny - 3:
+                spots.append((float(cx), float(cy)))
+    sm = _gf(np.nan_to_num(s - med), 2.0)
+    by, bx = np.unravel_index(int(np.argmax(sm)), sm.shape)
+    spots.append((float(bx), float(by)))
+    for cx, cy in spots:
+        near = [o for o in sim if np.hypot(o["x"] - cx, o["y"] - cy) * SPX_ARCSEC <= max(15.0, 2.5 * SPX_ARCSEC)
+                and kind_of(o["ot"]) != "Object"]
+        if near:
+            o = max(near, key=lambda o: o["nbref"])
+            if o["oid"] not in used:
+                out.append(o); used.add(o["oid"])
     # 1. named extended objects whose body covers a good part of the frame (a galaxy, a nebula): listed even without one peak
     for o in sorted(sim, key=lambda o: -o["nbref"]):
         if o["ot"] in EXTENDED and o["size"] >= 15 and o["nbref"] >= 10 and len(out) < 4:

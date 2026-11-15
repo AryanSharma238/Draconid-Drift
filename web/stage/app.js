@@ -178,7 +178,7 @@ function bindSky() {
     if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
     // the field is the square that covers the whole highlighted area, centred on it
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
-    if (side > 5400) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`); }
+    if (side > 7200) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 2°.`); }
     
   // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
   let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
@@ -463,7 +463,7 @@ function fillPage(res) {
   const where = f.constellation ? `in ${f.constellation}` : "";
   $("iKind").textContent = f.kind ? `${f.kind}${where ? " · " + where : ""}` : `Patch of sky ${where}`.trim();
   let row;
-  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).length, "objects listed") + fact(res.visits, "SPHEREx visits");
+  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).filter(o => inView(res, o)).length, "objects listed") + fact(res.visits, "SPHEREx visits");
   else if (f.galaxy) row = fact(f.redshift != null ? `z ${fmtN(f.redshift, Math.abs(f.redshift) < 0.1 ? 4 : 3)}` : null, f.redshift < 0 ? "moving toward us" : "redshift") + fact(fmtAgo(f.light_years_ago), "light left") + fact(f.size_arcmin ? `${fmtN(f.size_arcmin, 1)}′` : null, "size on sky");
   else row = fact(fmtLy(f.distance_ly), "distance") + fact(f.temp_k ? `≈${fmtN(f.temp_k)} K` : null, "surface temp") + fact(f.motion_arcsec_yr != null ? `${fmtN(f.motion_arcsec_yr, f.motion_arcsec_yr < 1 ? 2 : 1)}″/yr` : null, "motion on sky");
   $("iFacts").innerHTML = row;
@@ -553,11 +553,12 @@ function selectBand(d) {
   bandSel = d; placeKnob(); waveLabel(); drawSpectrum();
   if (bandReady(d)) showBand(d);
 }
+const dateYear = s => { const t = Date.parse(s + "T00:00:00Z"); return 1970 + t / 31557600000; };
 function showBand(d) {
   const res = last_res; if (!res || !P) return;
   const base = d === detNum(res.detector), b = (res.bands || []).find(x => x.det === d);
   const src = base ? res : b; if (!src) return;
-  loadFrames({ frames: src.frames }).then(() => { P.curDates = src.dates; P.curBase = base; tpos = 0; drawSpx(); });
+  loadFrames({ frames: src.frames }).then(() => { P.curDates = src.dates; P.curYears = base ? res.years : src.dates.map(dateYear); P.curBase = base; tpos = 0; drawSpx(); });
 }
 (() => {                                             // drag along the bar, or use the arrow keys
   const w = $("wave"); let down = false;
@@ -576,9 +577,15 @@ function onBands(res) {                             // the other five ranges and
 
 /* "In the frame": a small picture of each object and what it is. Hover rings it in both panels. */
 let hl = null;
+// is this object inside the part of the field the image panels show? (a tall panel crops the field's sides)
+function inView(res, o) {
+  const f = $("pSpx").getBoundingClientRect(); if (!f.width) return true;
+  const p = toPx(res, o.ra, o.dec, f.width, f.height), m = 6;
+  return p[0] >= -m && p[0] <= f.width + m && p[1] >= -m && p[1] <= f.height + m;
+}
 function fillObjects(res) {
   const ul = $("iObjs"); ul.innerHTML = ""; hl = null; drawHl();
-  const list = res.objects || [];
+  const all = res.objects || [], list = all.filter(o => inView(res, o));   // only what the panels actually show
   if (!list.length) { ul.innerHTML = `<li class="none">Nothing bright enough to list</li>`; return; }
   list.forEach(o => {
     const li = document.createElement("li");
@@ -586,7 +593,7 @@ function fillObjects(res) {
     li.querySelector(".nm").textContent = o.name || "Unnamed source";
     const ago = fmtAgo(o.ago);
     li.querySelector(".kd").textContent = o.kind + (ago ? ` · light left ${ago} ago` : "") + (o.name ? "" : " (our model's guess)");
-    const idx = String(list.indexOf(o));
+    const idx = String(all.indexOf(o));
     li.onmouseenter = () => { hl = o; li.classList.add("on"); drawHl(); specFor = idx; drawSpectrum(); };
     li.onmouseleave = () => { if (hl === o) hl = null; li.classList.remove("on"); drawHl(); specFor = "target"; drawSpectrum(); };
     ul.appendChild(li);
@@ -701,7 +708,7 @@ function loadFrames(res) {
   return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => { imgs = a; });
 }
 function preparePlayer(res) {
-  P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curBase = true;
+  P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curYears = res.years; P.curBase = true;
   const cv = $("spxCv"), f = $("pSpx").getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(f.width * d); cv.height = Math.round(f.height * d);
   // above and below the square field: the same SPHEREx all-sky map the flight landed on
@@ -738,8 +745,8 @@ function drawSpx() {
   g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
   if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
   g.filter = "none";
-  const yr = P.years ? (j > i ? P.years[i] + (P.years[j] - P.years[i]) * e : P.years[i]) : args.mid;
-  for (const m of (P.curBase === false ? [] : P.movers || [])) {   // grey = archive position, dotted line, red = now
+  const Y = P.curYears || P.years, yr = Y ? (j > i ? Y[i] + (Y[j] - Y[i]) * e : Y[i]) : args.mid;
+  for (const m of P.movers || []) {           // in every wavelength band: grey = archive position, dotted line, red = now
     const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
     ghost(g, p0[0], p0[1], p1[0], p1[1], S * 0.78); ring(g, p1[0], p1[1], S * 0.64, 0.95);
   }
@@ -758,7 +765,7 @@ $("cmpBtn").onclick = () => {
   const on = !app.classList.contains("split");
   app.classList.toggle("split", on); $("cmpBtn").setAttribute("aria-pressed", String(on));
   syncCmp(last_res);
-  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase]; preparePlayer(P); [tpos, P.curDates, P.curBase] = keep; drawSpx(); } if (last_res) paintWise(last_res); drawHl(); });
+  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) { paintWise(last_res); fillObjects(last_res); } drawHl(); });
 };
 window.addEventListener("keydown", e => {
   if (e.key === "Escape") { if (app.classList.contains("searching")) closeSearch(); else if (app.classList.contains("about")) closeAbout(); }
@@ -796,7 +803,7 @@ function showItems(list) {
 }
 function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
 function choose(it) {
-  const fov = it.key !== "custom" ? it.fov : Math.min(5400, Math.max(300, 1.3 * 60 * (it.size || 0)));
+  const fov = it.key !== "custom" ? it.fov : Math.min(7200, Math.max(300, 1.3 * 60 * (it.size || 0)));
   go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { fov: fov || 300 }));
 }
 
@@ -833,38 +840,8 @@ qEl.addEventListener("keydown", e => {
   else if (e.key === "Enter" && items.length) { choose(items[Math.max(0, sel)]); }
 });
 function parseCoords(q) {
-  let s = q.trim();
-  // Check for sexagesimal like 19h 43m 40.6s -46d 39m 15s or RA 19h 43m 40.6s Dec -46° 39' 15"
-  const sexaRegex = /^(?:RA\s*:?\s*)?(\d+)[h\s:]+(\d+)[m\s:]+([\d.]+)[s\s,]+(?:Dec\s*:?\s*)?([+-]?\d+)[d\s:°]+(\d+)[m\s:\x27]+([\d.]+)s?["\x27]?$/i;
-  const match = s.match(sexaRegex);
-  if (match) {
-    const h = +match[1], m = +match[2], sec = +match[3];
-    const dSign = match[4].startsWith("-") ? -1 : 1;
-    const d = Math.abs(+match[4]), dm = +match[5], dsec = +match[6];
-    const ra = ((h + m / 60 + sec / 3600) * 15 + 360) % 360;
-    const dec = dSign * (d + dm / 60 + dsec / 3600);
-    return {
-      key: "custom",
-      name: `${ra.toFixed(3)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(3)}°`,
-      ra,
-      dec,
-      kind: "Coordinates (Sexagesimal)",
-      epoch: args.mid,
-    };
-  }
-  // Check for decimal with or without RA/Dec prefix, e.g. "RA 295.919, Dec -46.654" or "295.919, -46.654"
-  s = s.replace(/RA\s*:?\s*/gi, "").replace(/Dec\s*:?\s*/gi, "");
-  const parts = s.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
-  if (parts.length === 2 && parts.every(isFinite) && Math.abs(parts[1]) <= 90) {
-    return {
-      key: "custom",
-      name: `${parts[0].toFixed(3)}°, ${parts[1] >= 0 ? "+" : ""}${parts[1].toFixed(3)}°`,
-      ra: ((parts[0] % 360) + 360) % 360,
-      dec: parts[1],
-      kind: "Coordinates",
-      epoch: args.mid,
-    };
-  }
+  const m = q.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
+  if (m.length === 2 && m.every(isFinite) && Math.abs(m[1]) <= 90) return { key: "custom", name: `${m[0].toFixed(3)}°, ${m[1] >= 0 ? "+" : ""}${m[1].toFixed(3)}°`, ra: ((m[0] % 360) + 360) % 360, dec: m[1], kind: "Coordinates", epoch: args.mid };
   return null;
 }
 const esc = s => s.replace(/'/g, "''");
@@ -938,105 +915,22 @@ function openAbout(which = "how") {
   if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
   document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
   document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));
+  if (which === "targets") {
+    const ul = $("tlist"); ul.innerHTML = "";
+    presetItems().forEach(p => { const li = document.createElement("li"), b = document.createElement("button");
+      b.innerHTML = `<span></span><small></small>`; b.firstChild.textContent = p.name; b.lastChild.textContent = p.kind || "";
+      b.onclick = () => { closeAbout(); choose(p); }; li.appendChild(b); ul.appendChild(li); });
+  }
 }
 function closeAbout() { page = null; app.classList.remove("about"); document.querySelectorAll("#bar .navb").forEach(b => b.classList.remove("on")); }
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
-/* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
-const MOVER_CATALOG = [
-  // 5 NASA Challenge Presets
-  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge mover (10.3″/yr)", tag: "Challenge" },
-  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Challenge mover · Brown dwarf pair", tag: "Challenge" },
-  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Challenge mover · Cold brown dwarf (8.1″/yr)", tag: "Challenge" },
-  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Young variable star", tag: "Challenge" },
-  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Mira pulsating star", tag: "Challenge" },
-  // Additional Fast-Moving Stars
-  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)", tag: "Fast Mover" },
-  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary system (5.3″/yr)", tag: "Fast Mover" },
-  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)", tag: "Fast Mover" },
-];
-
-const RANDOM_TARGETS = [
-  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
-  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system", fov: 450 },
-  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
-  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant", fov: 400 },
-  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard calibrator star", fov: 350 },
-  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Open star cluster", fov: 1200 },
-  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
-  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
-];
-
-const sideDrawer = $("side-drawer");
-const drawerToggle = $("drawer-toggle");
-const drawerClose = $("drawer-close");
-const drawerMovers = $("drawer-movers");
-const drawerRandoms = $("drawer-randoms");
-const randomStarBtn = $("random-star-btn");
-
-function initSideDrawer() {
-  if (!drawerMovers || !drawerRandoms) return;
-  drawerMovers.innerHTML = "";
-  drawerRandoms.innerHTML = "";
-
-  function renderList(list, container) {
-    list.forEach(star => {
-      const li = document.createElement("li");
-      li.className = "drawer-star-item";
-      li.innerHTML = `
-        <div class="star-item-main">
-          <div class="star-name">${star.name}</div>
-          <div class="star-desc">${star.kind || ""}</div>
-        </div>
-        ${star.tag ? `<span class="star-badge ${star.tag === 'Challenge' ? 'badge-chal' : 'badge-mover'}">${star.tag}</span>` : ""}
-      `;
-      li.onclick = () => {
-        choose(star);
-      };
-      container.appendChild(li);
-    });
-  }
-
-  renderList(MOVER_CATALOG, drawerMovers);
-  renderList(RANDOM_TARGETS, drawerRandoms);
-
-  if (randomStarBtn) {
-    randomStarBtn.onclick = () => {
-      const pool = [...MOVER_CATALOG, ...RANDOM_TARGETS];
-      const pick = pool[Math.floor(Math.random() * pool.length)];
-      choose(pick);
-    };
-  }
-
-  if (drawerToggle) {
-    drawerToggle.onclick = () => {
-      sideDrawer.classList.toggle("open");
-    };
-  }
-  if (drawerClose) {
-    drawerClose.onclick = () => {
-      sideDrawer.classList.remove("open");
-    };
-  }
-}
-
-function openDrawer() {
-  if (sideDrawer) {
-    sideDrawer.classList.add("open");
-  }
-}
-
-initSideDrawer();
-
 /* ---------------------------------------------------------------- landing: Demo / Explore */
 app.classList.add("landing");
 intro.preload().catch(() => {});
 const leaveLanding = () => app.classList.remove("landing");
-$("exploreBtn").onclick = () => {
-  leaveLanding();
-  openDrawer();
-};
+$("exploreBtn").onclick = leaveLanding;
 $("demoBtn").onclick = () => {
   intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
 };
@@ -1053,7 +947,7 @@ function enterDepth() {
 function exitDepth() {
   app.classList.remove("deep"); depth.close(); depthOpen = false;
   $("timeBtn").textContent = "Past & future"; $("timeBtn").setAttribute("aria-pressed", "false");
-  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase]; preparePlayer(P); [tpos, P.curDates, P.curBase] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
+  requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
 }
 async function showDepth(res) {
   last_res.depth = res.depth;

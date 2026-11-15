@@ -1,8 +1,8 @@
-// "Past & future": the patch of sky seen from the side. Distance from Earth runs left to right on a log scale,
-// read off the ruler along the bottom; the ruler is exact for every object because the view is orthographic and
-// only ever spins about the line of sight. Galaxies are drawn at their measured angular size, shape and tilt (on
-// the same scale as the patch's width); stars are points. The time slider moves every star along its measured
-// 3D velocity, backwards or forwards, and in the deep past sweeps the light-cone slice outwards.
+// "Past & future": the patch of sky as a 3D volume. Distance from Earth runs along the axis on a log scale, with
+// the scale drawn on the axis itself so it reads true from any angle; turn the camera freely in 3D. Galaxies are
+// drawn at their measured angular size, shape and tilt (on the same scale as the patch's width); stars are points.
+// The time slider moves every star along its measured 3D velocity (across the sky and toward or away from us),
+// backwards or forwards, and in the deep past sweeps the light-cone slice outwards.
 const THREE_URL = "https://unpkg.com/three@0.160.0/build/three.module.js";
 let T = null;
 
@@ -23,11 +23,14 @@ const sameName = (a, b) => { const x = norm(a), y = norm(b); return x && y && (x
 let st = null;
 
 // where a star is at time t (years from now): r(t) = r0 + v t, straight line, both directions
+// the star's position vector in its own frame (east, north, along the line of sight) is (0, 0, d); after t years
+// it is (ve t, vn t, d + vr t). Its new distance is the length of that vector and its new direction on the sky
+// is the angle of the vector, added to where it started.
 function moved(o, t) {
   if (o.cls !== "star" || !t) return { x: o.x, y: o.y, ly: o.ly };
   const tt = Math.max(-MOTION_MAX, Math.min(MOTION_MAX, t));
-  const ve = o.v[0] * KMS_LY * tt, vn = o.v[1] * KMS_LY * tt, vr = o.v[2] * KMS_LY * tt;
-  return { x: o.x + (ve / o.ly) * 57.29578, y: o.y + (vn / o.ly) * 57.29578, ly: Math.max(0.05, Math.hypot(o.ly + vr, ve, vn)) };
+  const e = o.v[0] * KMS_LY * tt, n = o.v[1] * KMS_LY * tt, r = o.ly + o.v[2] * KMS_LY * tt;
+  return { x: o.x + Math.atan2(e, r) * 57.29578, y: o.y + Math.atan2(n, Math.hypot(r, e)) * 57.29578, ly: Math.max(0.05, Math.hypot(e, n, r)) };
 }
 
 export async function open(el, data, res) {
@@ -36,9 +39,9 @@ export async function open(el, data, res) {
   const cv = el.querySelector("#depthCv"), ruler = el.querySelector("#rulerCv"), tip = el.querySelector("#depthTip"), tags = el.querySelector("#depthTags");
   const renderer = new T.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-  const scene = new T.Scene(), cam = new T.OrthographicCamera(-1, 1, 1, -1, -500, 500);
+  const scene = new T.Scene(), cam = new T.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   const R = data.radius_deg || 0.15;
-  const world = new T.Group(); scene.add(world);            // spins about the depth (x) axis only
+  const world = new T.Group(); scene.add(world);
   // sky offsets (deg east, deg north) + distance -> world: x = depth, y = north, z = east
   const unit = s => HALF * Math.max(s, 0.25) / R;           // world units per degree of sky at depth s
   const place = (x, y, ly) => { const s = sOf(ly) * DEC, k = unit(s); return new T.Vector3(s, y * k, x * k); };
@@ -85,35 +88,48 @@ export async function open(el, data, res) {
   const tagEls = [{ el: mk("Earth", "you are here", "earth"), obj: earth }]
     .concat(labelled.map(sp => ({ el: mk(sp.userData.o.name, fmtLy(sp.userData.o.ly), sp === target ? "tgt" : ""), obj: sp })));
 
-  // view: side-on, Earth at the left. Drag sideways to pan along distance, up/down to spin the patch about
-  // its axis; scroll to zoom where the pointer is. The ruler stays exact in every position.
+  // view: a free 3D camera that orbits a point on the distance axis. Drag to turn in any direction (all three
+  // axes), shift-drag or right-drag to slide along the distance axis, scroll to zoom. The distance scale is drawn
+  // on the axis itself, so it stays true from every angle.
   const ss = objs.map(sp => sOf(sp.userData.o.ly)), lo = ss.length ? Math.min(...ss) : 0, hi = ss.length ? Math.max(...ss) : 4;
   let cx = (Math.max(0, lo - 0.6) + Math.min(10.3, hi + 0.4)) / 2 * DEC, span = Math.max(3 * DEC, Math.min(10.8, hi - Math.max(0, lo - 0.6) + 1.2) * DEC);
-  cx = Math.max(cx, span / 2 - 0.08 * span);               // keep Earth just inside the left edge at the start
-  let spin = 0.5, time = 0, W = 1, H = 1;
-  const size = () => { const r = el.getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1); W = r.width; H = r.height;
-    renderer.setSize(W, H, false); ruler.width = W * d; ruler.height = 46 * d; };
+  cx = Math.max(cx, span / 2 - 0.08 * span);
+  let yaw = 0, pitch = 0.18, roll = 0.5, time = 0, W = 1, H = 1;
+  const size = () => { const r = el.getBoundingClientRect(); W = r.width; H = r.height; renderer.setSize(W, H, false); };
   size(); const ro = new ResizeObserver(size); ro.observe(el);
-  const toWorldX = px => cx + (px / W - 0.5) * span;
   let drag = null;
-  cv.addEventListener("pointerdown", e => { e.preventDefault(); drag = [e.clientX, e.clientY, cx, spin]; cv.setPointerCapture(e.pointerId); tip.classList.remove("on"); });
+  cv.addEventListener("contextmenu", e => e.preventDefault());
+  cv.addEventListener("pointerdown", e => { e.preventDefault(); drag = [e.clientX, e.clientY, cx, yaw, pitch, e.shiftKey || e.button === 2]; cv.setPointerCapture(e.pointerId); tip.classList.remove("on"); });
   cv.addEventListener("pointerup", () => { drag = null; });
   cv.addEventListener("pointermove", e => {
-    if (drag) { cx = Math.max(-2, Math.min(11 * DEC, drag[2] - (e.clientX - drag[0]) / W * span)); spin = drag[3] + (e.clientY - drag[1]) * 0.008; return; }
+    if (drag) {
+      const dx = e.clientX - drag[0], dy = e.clientY - drag[1];
+      if (drag[5]) cx = Math.max(-2, Math.min(11 * DEC, drag[2] - dx / W * span * Math.cos(yaw)));
+      else { yaw = drag[3] + dx * 0.006; pitch = Math.max(-1.5, Math.min(1.5, drag[4] + dy * 0.006)); }
+      return;
+    }
     hover(e);
   });
-  cv.addEventListener("wheel", e => { e.preventDefault();
-    const r = cv.getBoundingClientRect(), px = e.clientX - r.left, before = toWorldX(px);
-    span = Math.max(1.2, Math.min(12 * DEC, span * Math.exp(e.deltaY * 0.0012)));
-    cx += before - toWorldX(px);                               // zoom about the pointer
-  }, { passive: false });
+  cv.addEventListener("wheel", e => { e.preventDefault(); span = Math.max(1.2, Math.min(12 * DEC, span * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
   cv.addEventListener("dragstart", e => e.preventDefault());
+  // the distance axis with its scale: a line from Earth, tick marks, labels that follow it in 3D
+  const axisMat = new T.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .45 });
+  world.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0, 0, 0), new T.Vector3(10.3 * DEC, 0, 0)]), axisMat));
+  const ticks = [];
+  for (let k = 0; k <= 10; k++) for (const m of k < 10 ? [1, 2, 5] : [1]) {
+    const ly = m * 10 ** k, x = sOf(ly) * DEC, h = m === 1 ? .7 : .35;
+    world.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x, -h, 0), new T.Vector3(x, h, 0)]), axisMat));
+    const d = document.createElement("div"); d.className = "dtick" + (m === 1 ? " major" : "");
+    d.textContent = fmtLy(ly).replace(" thousand", "k").replace(" million", "M").replace(" billion", "B");
+    tags.appendChild(d); const o = new T.Object3D(); o.position.set(x, -h, 0); world.add(o); ticks.push({ el: d, obj: o, major: m === 1 });
+  }
   const v3 = new T.Vector3();
   const scr = obj => { obj.getWorldPosition(v3); v3.project(cam); return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; };
   function hover(e) {
     const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; let best = null, bd = 16;
+    const rv = o => o.v && o.v[2] ? "" : o.cls === "star" ? " · no radial speed measured (motion across the sky only)" : "";
     for (const sp of objs) { const p = scr(sp); const d = Math.hypot(p.x - mx, p.y - my); if (d < bd) { bd = d; best = sp; } }
-    if (best) { const o = best.userData.o; tip.innerHTML = `<b>${esc(o.name)}</b><span>${esc(o.kind)} · ${fmtLy(best.userData.now)}${o.size ? ` · ${nice(o.size, 1)}′ across` : ""}</span>`;
+    if (best) { const o = best.userData.o; tip.innerHTML = `<b>${esc(o.name)}</b><span>${esc(o.kind)} · ${fmtLy(best.userData.now)}${o.size ? ` · ${nice(o.size, 1)}′ across` : ""}${rv(o)}</span>`;
       tip.style.left = (mx + 14) + "px"; tip.style.top = (my + 10) + "px"; tip.classList.add("on"); }
     else tip.classList.remove("on");
   }
@@ -135,20 +151,13 @@ export async function open(el, data, res) {
     if (time < -MOTION_MAX) { const s = sOf(-time) * DEC, w = HALF * s * 2.2; shell.position.set(s, 0, 0); shell.scale.set(w, w, 1); shellMat.opacity = .13; }
     else shellMat.opacity = 0;
   }
-  function drawRuler() {                                      // distance from Earth: exact under every object
-    const g = ruler.getContext("2d"), d = ruler.width / W;
-    g.clearRect(0, 0, ruler.width, ruler.height);
-    g.strokeStyle = "rgba(255,255,255,.4)"; g.lineWidth = d; g.beginPath(); g.moveTo(0, 8 * d); g.lineTo(ruler.width, 8 * d); g.stroke();
-    g.font = `${11.5 * d}px Montserrat, sans-serif`; g.fillStyle = "rgba(255,255,255,.85)"; g.textAlign = "center";
-    const px = s => ((s - cx) / span + 0.5) * W * d;
-    let last = -1e9;
-    for (let k = 0; k <= 10; k++) for (const m of [1, 2, 5]) {
-      if (k === 10 && m > 1) continue;
-      const ly = m * 10 ** k, x = px(sOf(ly) * DEC), major = m === 1;
-      if (x < -20 || x > ruler.width + 20) continue;
-      g.beginPath(); g.moveTo(x, 8 * d); g.lineTo(x, (major ? 16 : 12) * d); g.stroke();
-      const lab = fmtLy(ly).replace(" thousand", "k").replace(" million", "M").replace(" billion", "B");
-      if (x - last > 64 * d && (major || span < 4 * DEC)) { g.fillText(lab, x, 31 * d); last = x; }
+  function drawRuler() {
+    let last = null;
+    for (const t of ticks) {
+      const p = scr(t.obj), on = p.x > -30 && p.x < W + 30 && p.y > -20 && p.y < H + 20;
+      const room = !last || Math.hypot(p.x - last.x, p.y - last.y) > (t.major ? 46 : 64);
+      if (on && room) { t.el.style.display = "block"; t.el.style.transform = `translate(${p.x}px,${p.y + 6}px) translateX(-50%)`; last = p; }
+      else t.el.style.display = "none";
     }
   }
   function placeTags() {
@@ -163,8 +172,10 @@ export async function open(el, data, res) {
   let raf = 0;
   const loop = () => {
     const a = W / H; cam.left = -span / 2; cam.right = span / 2; cam.top = span / 2 / a; cam.bottom = -span / 2 / a;
-    cam.position.set(cx, 0, 100); cam.lookAt(cx, 0, 0); cam.updateProjectionMatrix();
-    world.rotation.x = spin;
+    const R0 = 150;                                     // orbit the focus point on the axis
+    cam.position.set(cx + R0 * Math.sin(yaw) * Math.cos(pitch), R0 * Math.sin(pitch), R0 * Math.cos(yaw) * Math.cos(pitch));
+    cam.up.set(0, 1, 0); cam.lookAt(cx, 0, 0); cam.updateProjectionMatrix();
+    world.rotation.x = roll;
     layout(); renderer.render(scene, cam); drawRuler(); placeTags();
     raf = requestAnimationFrame(loop);
   };

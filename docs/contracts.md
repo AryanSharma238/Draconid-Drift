@@ -157,9 +157,10 @@ Rules:
 |---|---|---|
 | `GET /api/sequence` | `ra`, `dec` (deg, required); `size` (deg, one of FOV_CHOICES, default 0.1); `det` (1–6, default 6); `mode` (`all`\|`pass`, default `all`) | NDJSON stream (C5). 422 on invalid params, with JSON `{"error": "..."}`. Zero coverage → `header` with `n_expected:0` then `done`. |
 | `GET /api/resolve` | `q` (name or coordinates) | `{"name","ra","dec","epoch","pmra","pmdec","ra_now","dec_now","epoch_now"}` (Task 09 E1; pm in mas/yr, 0 if unknown), or 404 `{"error":"not found"}` |
-| `GET /api/lightcurve` | `ra`, `dec`, `size`, `det` | Task 09 E4 |
+| `GET /api/counts` | `ra`, `dec`, `size`, `det` | `{"det":6,"n_exposures":N,"n_passes":n}` from the footprint index only (no S3 reads). `n_exposures` = `n_expected` in mode all/lmdiff, `n_passes` = `n_expected` in mode pass. 503 if the detector's index is missing. |
+| `GET /api/lightcurve` | `ra`, `dec`, `size`, `det` | Task 09 E4. `summary.photometry == "ring"` (and `"ring": true` on each point) when the aperture is unusable for most frames (saturated core): PSF-wing photometry, still λ-matched. |
 | `GET /api/catalog` | `ra`, `dec`, `size`, `epochs` (comma list of MJD) | Phase 6, see `tasks/06-features.md` F2 |
-| `GET /api/spectrum` | `ra`, `dec`, `size`; optional `pmra`, `pmdec` (mas/yr; the aperture follows the PM from `config.SPHEREX_MID_EPOCH`, the epoch of the grid centre) | JSON `{"points":[{"lambda_um","flux","err","t_mjd","det","pass","flags"}], "unit":"<BUNIT>", "n_frames":int, "n_failed":int, "dets":[...]}`, sorted by λ. `flags` = uint32 FLAGS value at the aperture-centre pixel. Detectors whose index is missing are listed in `"missing_dets"`, not an error. Cached in L2 as `spectrum/{key}.json`. See F3. |
+| `GET /api/spectrum` | `ra`, `dec`, `size`; optional `pmra`, `pmdec` (mas/yr; the aperture follows the PM from `config.SPHEREX_MID_EPOCH`, the epoch of the grid centre) | JSON `{"points":[{"lambda_um","flux","err","t_mjd","det","pass","flags"}], "unit":"<BUNIT>", "n_frames":int, "n_failed":int, "dets":[...]}`, sorted by λ. `flags` = uint32 FLAGS value at the aperture-centre pixel. Detectors whose index is missing are listed in `"missing_dets"`, not an error. `photometry` is `"aperture"` (2 px aperture, annulus background) or `"ring"`: when fewer than `config.RING_AUTO_APERTURE_FRAC` of all frames have a finite aperture (saturated core delivered as NaN, e.g. R Dra, Barnard's), the WHOLE spectrum switches to PSF-wing photometry (sum over r = `config.RING_R_IN`..`RING_R_OUT` px; adds `"ring_radii_px"`, and `unit` says so). Ring flux is relative only: the ring's share of the total flux changes with wavelength. Only fetch failures count against the 20% cache limit; non-finite points do not. Cached in L2 as `spectrum/{key}.json`. See F3. |
 | `GET /api/health` | — | `{"ok":true,"data_version":..,"index_rows":..}` |
 
 Every response carries a `Server-Timing` header (e.g. `index;dur=12, fetch;dur=3400, process;dur=800`) and `Access-Control-Allow-Origin: *`.
@@ -225,6 +226,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);  -- data_version, last_syn
 | `pmra`, `pmdec`, `epoch` | mas/yr, mas/yr, jyear | 0, 0, 2000 | Catalogue PM for the moving crosshair (Task 09 E1) |
 | `epoch_now` | jyear | `/api/resolve`'s `epoch_now` | Epoch of the grid centre; the crosshair offset is `pm · (t_frame − epoch_now)`. Written by resolve so a shared link does not depend on a client constant |
 | `flags` | 0/1 | 0 | Flag overlay (C1 `FLAG_BIT_NAMES`) |
+| `maxnan` | percent | 20 | Hide frames with more than this % NaN pixels (mode `all` / `lmdiff`, client-side; omitted from the URL when 20) |
 | `hl` | int | — | Highlight mover index (gallery links, Task 09 E6) |
 
 [VERIFY] WiseView's names in recon step R3a. Where WiseView uses a different name for the same meaning, **use WiseView's name** and update this table.
@@ -248,6 +250,7 @@ API modes (C6 `/api/sequence` `mode`): add `"lmdiff"` → C5 frames whose data a
 ---
 
 ## Change log
+- 2026-11-14 (Track A, late): `/api/spectrum` and `/api/lightcurve` fall back to PSF-wing ring photometry for saturated cores (`photometry`, `ring_radii_px`, `ring`); spectrum caching ignores non-finite points; `/api/resolve` answers known targets locally (`backend/known_targets.py`); FLAG_BITS_BAD no longer includes TRANSIENT/SUR_ERROR.
 - 2026-11-14 (Track A, evening): C5 `status` before `header`, `done.zscale`, pass previews (`preview:true`, replace by `i`, round-robin fetch); C6 `/api/spectrum` shape (F3) with PM-following aperture; C9 NaN = grey hatch; C10 `lmdiff`, `epoch_now`, `flags`, `lam_min/lam_max` client-side; C11 `error` key. All 6 detectors indexed via pointing pairs (`config.S3_INDEX_PAIRS`).
 - 2026-11-14 (Track A, IRSA outage): `ImageRef.uri` is now the S3 key; `release` is the lowercase S3 prefix (`dr1`/`qr3`/`qr2`), priority per `config.RELEASE_PRIORITY`. Image discovery uses the S3 footprint index (`config.S3_INDEX_PATH`), not TAP. FETCH_METHOD = "s3".
 - 2026-11-14 (Track A recon): C2 filename regex confirmed; dedupe rule changed: release priority DR1 > QR3 > QR2 (QR2/QR3 overlap in time), numeric version compare instead of lexicographic (breaks on `l2b_retry-`). C1 instrument values filled from a real DR1 D6 file + Explanatory Supplement v2.1 (see `backend/config.py` comments for evidence).

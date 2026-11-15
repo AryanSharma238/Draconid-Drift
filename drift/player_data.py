@@ -10,7 +10,7 @@ from astropy.time import Time
 
 from backend import config
 from backend import motion as backend_motion
-from backend.photometry import aperture_flux
+from backend.photometry import aperture_flux, ring_flux
 
 from .clean import Cube, burst_groups, cube_to_frames
 from .render import (
@@ -29,11 +29,11 @@ def _date(mjd):
     return Time(float(mjd), format="mjd").iso[:10]
 
 
-def _astrometry_from_backend(frames, stacks, mjd_groups, center_xy, v_expected):
+def _astrometry_from_backend(frames, stacks, mjd_groups, center_xy, v_expected, precomputed_res=None, precomputed_pass_res=None):
     """Use `backend.motion.measure_movers` on residuals, falling back to pass-coadd centroid fit."""
     try:
-        res_frames = backend_motion.lambda_matched_residuals(frames)
-        pass_res = backend_motion.pass_stack(res_frames)
+        res_frames = precomputed_res if precomputed_res is not None else backend_motion.lambda_matched_residuals(frames)
+        pass_res = precomputed_pass_res if precomputed_pass_res is not None else backend_motion.pass_stack(res_frames)
         movers = backend_motion.measure_movers(pass_res)
     except Exception:
         movers = []
@@ -120,8 +120,8 @@ def _astrometry_from_backend(frames, stacks, mjd_groups, center_xy, v_expected):
 
 
 def _photometry_from_backend(frames, center_xy, v_expected):
-    """Extract forced-aperture spectrum via `backend.photometry.aperture_flux` and
-    differential light curve via `backend.motion.lambda_matched_lightcurve`."""
+    """Extract forced-aperture spectrum via `backend.photometry.aperture_flux` (or `ring_flux` fallback)
+    and differential light curve via `backend.motion.lambda_matched_lightcurve`."""
     m_mean = float(np.mean([f.ref.t_mjd for f in frames]))
     x0, y0 = center_xy
     spec_pts = []
@@ -141,6 +141,16 @@ def _photometry_from_backend(frames, center_xy, v_expected):
             config.SPECTRUM_ANNULUS_R_IN,
             config.SPECTRUM_ANNULUS_R_OUT,
         )
+        if not np.isfinite(fl):
+            fl, er = ring_flux(
+                f.data,
+                f.var,
+                xi,
+                yi,
+                config.RING_R_IN,
+                config.RING_R_OUT,
+                config.RING_MIN_FINITE_FRAC,
+            )
         if np.isfinite(fl) and np.isfinite(f.lambda_um):
             spec_pts.append(
                 dict(
@@ -290,7 +300,8 @@ def build_payload(cube: Cube, expected_xy, v_expected, v_tracked, zoom=None, bes
                     mjd=mm)]
 
     astrometry = _astrometry_from_backend(
-        b_frames, [s[1] for s in stacks], [cube.mjd[g] for g in groups], center_xy, v_expected
+        b_frames, [s[1] for s in stacks], [cube.mjd[g] for g in groups], center_xy, v_expected,
+        precomputed_res=res_frames, precomputed_pass_res=res_pass_coadds,
     )
     spectrum, lightcurve = _photometry_from_backend(b_frames, center_xy, v_expected)
 

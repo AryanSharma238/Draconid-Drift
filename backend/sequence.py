@@ -38,6 +38,7 @@ LIGHTCURVE_UNAVAILABLE = "lightcurve not available"
 # the IMAGE header (BUNIT = MJy/sr, notes/recon.md); Frame does not carry BUNIT. `flux` is an aperture SUM
 # (background-subtracted), so the honest unit is surface brightness x pixels, not MJy/sr.
 SPECTRUM_UNIT = "MJy/sr x px (aperture sum)"
+SPECTRUM_RING_UNIT = "MJy/sr x px (PSF-wing ring sum; relative, core saturated)"
 MAS_PER_ARCSEC = 1000.0
 WARM_MODULES = ("backend.fetch", "backend.process")  # imported in every pool worker by warm_worker
 
@@ -592,8 +593,10 @@ def aperture_position(grid: Grid, t_mjd: float, pmra_masyr: float, pmdec_masyr: 
     return c - pmra_masyr / mas_per_px * dt, c + pmdec_masyr / mas_per_px * dt
 
 
-def _spectrum_points(grid: Grid, loaded: Loaded, pmra: float, pmdec: float) -> tuple[list[dict], int]:
-    """(points, n_nonfinite). Blocking numpy; call from a thread."""
+def _spectrum_points(
+    grid: Grid, loaded: Loaded, pmra: float, pmdec: float, ring: bool = False
+) -> tuple[list[dict], int]:
+    """(points, n_nonfinite). `ring`: PSF-wing photometry instead of the 2 px aperture. Blocking numpy; call from a thread."""
     from backend import photometry
 
     pass_of = dict(zip((r.obs_id for r in loaded.refs), group_refs_by_pass(loaded.refs)))
@@ -601,15 +604,20 @@ def _spectrum_points(grid: Grid, loaded: Loaded, pmra: float, pmdec: float) -> t
     n_bad = 0
     for f in loaded.frames:
         x, y = aperture_position(grid, f.ref.t_mjd, pmra, pmdec)
-        flux, err = photometry.aperture_flux(
-            f.data,
-            f.var,
-            x,
-            y,
-            config.SPECTRUM_APERTURE_R,
-            config.SPECTRUM_ANNULUS_R_IN,
-            config.SPECTRUM_ANNULUS_R_OUT,
-        )
+        if ring:
+            flux, err = photometry.ring_flux(
+                f.data, f.var, x, y, config.RING_R_IN, config.RING_R_OUT, config.RING_MIN_FINITE_FRAC
+            )
+        else:
+            flux, err = photometry.aperture_flux(
+                f.data,
+                f.var,
+                x,
+                y,
+                config.SPECTRUM_APERTURE_R,
+                config.SPECTRUM_ANNULUS_R_IN,
+                config.SPECTRUM_ANNULUS_R_OUT,
+            )
         lam = float(f.lambda_um)
         # err <= 0 means the variance map was NaN/zero over the whole aperture: a flux without an error bar
         if not (math.isfinite(flux) and math.isfinite(err) and err > 0 and math.isfinite(lam)):
@@ -674,13 +682,29 @@ async def spectrum_result(
         return JsonResult(_dumps({"error": msg}), status=503, error=msg)
 
     points: list[dict] = []
-    n_failed = n_refs = 0
+    n_failed = n_refs = n_fetch_failed = 0
+    mode = "aperture"
     try:
-        for ld in loaded_by_det.values():
-            pts, n_bad = await asyncio.to_thread(_spectrum_points, grid, ld, pmra, pmdec)
-            points += pts
-            n_failed += len(ld.failed) + n_bad
-            n_refs += len(ld.refs)
+        for attempt in ("aperture", "ring"):
+            points, n_failed, n_refs, n_fetch_failed = [], 0, 0, 0
+            for ld in loaded_by_det.values():
+                pts, n_bad = await asyncio.to_thread(
+                    _spectrum_points, grid, ld, pmra, pmdec, attempt == "ring"
+                )
+                points += pts
+                n_failed += len(ld.failed) + n_bad
+                n_fetch_failed += len(ld.failed)
+                n_refs += len(ld.refs)
+            n_frames_total = sum(len(ld.frames) for ld in loaded_by_det.values())
+            mode = attempt
+            # a saturated/NaN core leaves most apertures unusable: switch the WHOLE spectrum to PSF-wing photometry
+            # (mixing units across detectors or frames would corrupt it)
+            if (
+                attempt == "ring"
+                or not n_frames_total
+                or len(points) / n_frames_total >= config.RING_AUTO_APERTURE_FRAC
+            ):
+                break
     except Exception as e:  # JSON 500 + traceback in the log, never silent
         log.exception("spectrum failed ra=%.5f dec=%.5f", ra, dec)
         msg = f"spectrum failed: {type(e).__name__}: {e}"
@@ -693,12 +717,18 @@ async def spectrum_result(
         "n_failed": n_failed,
         "dets": sorted({p["det"] for p in points}),
         "missing_dets": missing,
+        "photometry": mode,
     }
+    if mode == "ring":
+        payload["unit"] = SPECTRUM_RING_UNIT
+        payload["ring_radii_px"] = [config.RING_R_IN, config.RING_R_OUT]
     error = None if points else "no usable frames"
     if error:
         payload["error"] = error
     res = JsonResult(_dumps(payload), n_frames=len(points), n_failed=n_failed, error=error)
-    if error is None and not missing and n_failed / (n_failed + len(points)) < config.MAX_FAIL_FRAC:
+    # Only FETCH failures (transient, worth a retry) block caching. Non-finite photometry (a saturated or masked
+    # core) is deterministic: the same request would fail the same way, so the result is cacheable.
+    if error is None and not missing and n_refs > 0 and n_fetch_failed / n_refs < config.MAX_FAIL_FRAC:
         try:
             await asyncio.to_thread(cache.json_put, key, res.body)
             res.cacheable = True
@@ -706,8 +736,8 @@ async def spectrum_result(
             log.error("JSON cache write failed key=%s: %s: %s", key, type(e).__name__, e)
     else:
         log.warning(
-            "not caching spectrum ra=%.5f dec=%.5f: missing_dets=%s failed=%d/%d error=%s",
-            ra, dec, missing, n_failed, n_failed + len(points), error,
+            "not caching spectrum ra=%.5f dec=%.5f: missing_dets=%s fetch_failed=%d/%d error=%s",
+            ra, dec, missing, n_fetch_failed, n_refs, error,
         )  # fmt: skip
     log.info(
         "spectrum ra=%.5f dec=%.5f size=%s pm=(%.1f,%.1f) source=live points=%d failed=%d missing=%s ms=%d",

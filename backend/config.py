@@ -35,7 +35,17 @@ FLAG_BIT_NAMES = {
 # Track A decision: mask unusable pixels and artifacts that would blink as false movers.
 # NOT masked: OVERFLOW/NONLINEAR/BLOOM/HALO (bright star cores, e.g. Barnard's itself),
 # SOURCE (47.6% of pixels in the sample frame), GHOST* (large areas), FULLSAMPLE/CROSSTALK (informational).
-FLAG_BITS_BAD = (0, 2, 6, 7, 9, 10, 11, 14, 17, 19, 25, 27)
+# 2026-11-14 (docs/flag_mask_experiments.md): TRANSIENT (0) and SUR_ERROR (2) were REMOVED from the mask. On
+# bright stars the pipeline sets them on the star's own core and wings (Barnard's: 55 of 58 frames had the
+# aperture masked; raw pixels are finite). With them unmasked: M5 still 4/4 (Barnard D3 false candidates 6 -> 0),
+# Barnard's full-aperture frames 3 -> 50 of 58, RW Aur and eps Ind B spectra cache. OPEN: the Explanatory
+# Explanatory Supplement v1.0 (SSDC-DP-017) Table 9 p.26 and p.22, READ 2026-11-14: TRANSIENT = a transient such as a
+# cosmic ray detected during the ramp, ALSO charge spillover (bloom) from very bright neighbours; SUR_ERROR = onboard
+# processing consistency bit (with TRANSIENT/OVERFLOW: an EARLY transient/overflow). Their pixels are NOT invalid but
+# less accurate: TRANSIENT pixels get an ESTIMATED nonlinearity correction, SUR_ERROR pixels get NONE (so flux is
+# biased low where nonlinear). The frontend marks such spectrum points (hollow) instead of hiding them.
+# Still shown in the flag overlay and metadata line (frontend), just not blanked.
+FLAG_BITS_BAD = (6, 7, 9, 10, 11, 14, 17, 19, 25, 27)
 
 # --- processing ---
 SUBTRACT_ZODI = True  # CONFIRMED 2026-11-14: data-products doc "has not been subtracted"; D6 median IMAGE 0.39 ≈ ZODI 0.33
@@ -50,13 +60,13 @@ MAX_FOV_DEG = 0.5
 COORD_SNAP_DEG = 0.001  # snap request centre for cache sharing (3.6″ < 1 px)
 
 # --- fetching ---
-FETCH_CONCURRENCY = 32  # global, across all requests. 2026-11-14 EC2 A/B: 32 ≈ 64 > 16 (with S3_READ_WORKERS)
+FETCH_CONCURRENCY = 48  # global, across all requests. 2026-11-14 EC2 A/B: 32 ≈ 64 > 16 (with S3_READ_WORKERS)
 FETCH_RETRIES = 3
 FETCH_TIMEOUT_S = 30.0
-PROCESS_WORKERS = 4
+PROCESS_WORKERS = 8
 # S3 box reads run in their own process pool: in threads, astropy header/WCS parsing serialises on the GIL
 # (2026-11-14 EC2 A/B, fresh fields: threads 6.3 frames/s, first frame 1.7-3.2 s; processes 13.7/s, 0.9 s).
-S3_READ_WORKERS = 16
+S3_READ_WORKERS = 24
 PASS_PREVIEW_FRAMES = 4  # C5 pass previews: send a pass co-add early once this many of its inputs arrived
 S3_BOX_PAD_PX = 3  # padding around the grid box in source pixels, for bilinear edges + SIP margin
 S3_READ_BLOCK_BYTES = 262_144  # fallback GET on a prefetch miss (5 MB blocks made one frame ~38 s)
@@ -67,6 +77,14 @@ LC_APERTURE_R = 2.0
 LC_ANNULUS_R_IN = 4.0
 LC_ANNULUS_R_OUT = 6.0
 LC_MIN_TEMPLATE_SNR = 3.0  # skip a point when f_t <= this * e_t
+# PSF-wing ("ring") photometry for saturated cores (2026-11-14): R Dra's delivered pixels are NaN out to ~2 px, finite
+# from 3 px (median ~106 counts/px at r=3 vs ~4 at r=10). When fewer than RING_AUTO_APERTURE_FRAC of a target's frames
+# have a finite 2 px aperture, a spectrum/light curve uses the sum over the r_in..r_out annulus instead. Relative only:
+# the ring holds a wavelength-dependent fraction of the total flux (the PSF broadens with wavelength).
+RING_R_IN = 3.0
+RING_R_OUT = 6.0
+RING_MIN_FINITE_FRAC = 0.9  # skip a frame when fewer ring pixels are finite
+RING_AUTO_APERTURE_FRAC = 0.5
 
 # --- index ---
 HEALPIX_NSIDE = 32  # order 5, ~1.8° cells. DO NOT use finer: footprints are ~3.5°

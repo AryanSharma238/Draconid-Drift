@@ -132,7 +132,8 @@ async def test_point_fields_unit_pass_and_flags(monkeypatch, tmp_path, client):
 
     install(monkeypatch, tmp_path, SpecStubs(PASS_MJDS, scene, dets=(6,), missing=(1, 2, 3, 4, 5)))
     j = (await client.get("/api/spectrum", params=Q)).json()
-    assert set(j) == {"points", "unit", "n_frames", "n_failed", "dets", "missing_dets"}
+    assert set(j) == {"points", "unit", "n_frames", "n_failed", "dets", "missing_dets", "photometry"}
+    assert j["photometry"] == "aperture"
     assert j["unit"] == sequence.SPECTRUM_UNIT and "aperture sum" in j["unit"]  # flux is a sum, not MJy/sr
     p = j["points"][0]
     assert set(p) == {"lambda_um", "flux", "err", "t_mjd", "det", "pass", "flags"}
@@ -270,3 +271,62 @@ async def test_nonfinite_photometry_is_skipped_and_counted(monkeypatch, tmp_path
 async def test_invalid_params_422(client, bad):
     r = await client.get("/api/spectrum", params={**Q, **bad})
     assert r.status_code == 422 and isinstance(r.json()["error"], str)
+
+
+async def test_deterministic_nonfinite_points_do_not_block_caching(monkeypatch, tmp_path, client):
+    # why: WISE 0855's spectrum had 21% non-finite points and was thrown away by a limit meant for transient FETCH
+    # errors. Non-finite photometry is deterministic (a retry cannot fix it), so the result must be cached.
+    def scene(ref, k):
+        img = gauss(C, C)
+        if k < 3:  # 3 of 9 exposures have a masked aperture: 33% non-finite, 67% usable (stays aperture mode)
+            img[int(C), int(C)] = np.nan
+        return img, 3.0 + 0.1 * k, None
+
+    s = install(monkeypatch, tmp_path, SpecStubs(PASS_MJDS, scene, dets=(6,), missing=(1, 2, 3, 4, 5)))
+    # missing detectors still block caching by design, so provide all six
+    s = install(monkeypatch, tmp_path, SpecStubs(PASS_MJDS, scene))
+    r = await client.get("/api/spectrum", params=Q)
+    j = r.json()
+    assert (
+        j["photometry"] == "aperture" and j["n_failed"] == 3 * 6 and "max-age" in r.headers["cache-control"]
+    )
+    assert cache.json_get(cache.spectrum_key(GRID, 0.0, 0.0, index.data_version())) is not None
+    assert s.fetch_calls == 6
+
+
+class FailingFetch(SpecStubs):
+    """First `n_fail` exposures of every detector fail to fetch (a transient S3 problem)."""
+
+    n_fail = 3
+
+    async def get_frames(self, refs, grid):
+        self.fetch_calls += 1
+        async for i, frame, err in super().get_frames(refs, grid):
+            yield (i, None, "TimeoutError: stub") if i < self.n_fail else (i, frame, err)
+
+
+async def test_fetch_failures_still_block_caching(monkeypatch, tmp_path, client):
+    # why: the 20% rule exists for transient fetch errors (a retry would fill the gap), so it must still apply to them
+    install(monkeypatch, tmp_path, FailingFetch(PASS_MJDS, flat_scene))
+    r = await client.get("/api/spectrum", params=Q)
+    assert r.status_code == 200 and r.json()["n_failed"] == 3 * 6
+    assert cache.json_get(cache.spectrum_key(GRID, 0.0, 0.0, index.data_version())) is None
+    assert r.headers["cache-control"] == "no-store"
+
+
+async def test_saturated_core_switches_the_spectrum_to_ring_photometry(monkeypatch, tmp_path, client):
+    # why: R Dra's core is NaN in the delivered images, so the aperture spectrum was empty. The whole spectrum (never
+    # a mix of units) must switch to PSF-wing photometry, stay proportional to the source, and say so.
+    def scene(ref, k):
+        img = gauss(C, C, sigma=1.6)
+        yy, xx = np.mgrid[0:NPIX, 0:NPIX]
+        img[(xx - C) ** 2 + (yy - C) ** 2 < 2.5**2] = np.nan
+        return img * (2.0 if ref.detector == 6 else 1.0), 3.0 + 0.1 * k + 0.2 * ref.detector, None
+
+    install(monkeypatch, tmp_path, SpecStubs(PASS_MJDS, scene))
+    j = (await client.get("/api/spectrum", params=Q)).json()
+    assert j["photometry"] == "ring" and "ring" in j["unit"] and j["ring_radii_px"] == [3.0, 6.0]
+    assert j["n_frames"] == 6 * len(PASS_MJDS) and j["n_failed"] == 0
+    d6 = np.median([p["flux"] for p in j["points"] if p["det"] == 6])
+    d3 = np.median([p["flux"] for p in j["points"] if p["det"] == 3])
+    assert d6 / d3 == pytest.approx(2.0, rel=0.05)

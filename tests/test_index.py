@@ -166,4 +166,4 @@ def test_missing_index_fails_loud(idx_path):
 
 
 def test_data_version():
-    assert index.data_version() == "sprint-2026-11-15"
+    assert index.data_version() == "sprint-2026-11-15-b"

@@ -102,33 +102,43 @@ def load_cube(path):
 
 
 # --------------------------------------------------- EC2 + S3 fetchers ------
+_EC2_CLIENT: httpx.Client | None = None
+
+
+def _get_ec2_client() -> httpx.Client:
+    global _EC2_CLIENT
+    if _EC2_CLIENT is None:
+        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(12.0, connect=0.4))
+    return _EC2_CLIENT
+
+
 def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube | None:
     """If the EC2 SSH tunnel (`127.0.0.1:8000`) is active and exposes `/api/cube`, fetch from EC2."""
     try:
-        with httpx.Client(timeout=httpx.Timeout(12.0, connect=0.4)) as client:
-            r = client.get(
-                f"{EC2_BACKEND_URL}/api/cube",
-                params={"ra": ra, "dec": dec, "size": size_deg, "det": det},
-            )
-            if r.status_code != 200:
-                return None
-            z = np.load(io.BytesIO(r.content), allow_pickle=False)
-            grid = backend_make_grid(float(z["ra"]), float(z["dec"]), float(z["size_deg"]), float(z["pixscale_arcsec"]))
-            cube_arr = z["cube"].astype(float)
-            var_arr = z["var"].astype(float)
-            bad = ~np.isfinite(cube_arr) | ~np.isfinite(var_arr) | (var_arr <= 0)
-            cube_arr[bad] = np.nan
-            var_arr[bad] = np.nan
-            return Cube(
-                cube_arr,
-                var_arr,
-                z["mjd"].astype(float),
-                z["wl"].astype(float),
-                grid.wcs(),
-                detector_str,
-                "EC2-S3",
-                int(z["n_found"]),
-            )
+        client = _get_ec2_client()
+        r = client.get(
+            f"{EC2_BACKEND_URL}/api/cube",
+            params={"ra": ra, "dec": dec, "size": size_deg, "det": det},
+        )
+        if r.status_code != 200:
+            return None
+        z = np.load(io.BytesIO(r.content), allow_pickle=False)
+        grid = backend_make_grid(float(z["ra"]), float(z["dec"]), float(z["size_deg"]), float(z["pixscale_arcsec"]))
+        cube_arr = z["cube"].astype(float)
+        var_arr = z["var"].astype(float)
+        bad = ~np.isfinite(cube_arr) | ~np.isfinite(var_arr) | (var_arr <= 0)
+        cube_arr[bad] = np.nan
+        var_arr[bad] = np.nan
+        return Cube(
+            cube_arr,
+            var_arr,
+            z["mjd"].astype(float),
+            z["wl"].astype(float),
+            grid.wcs(),
+            detector_str,
+            "EC2-S3",
+            int(z["n_found"]),
+        )
     except Exception:
         return None
 

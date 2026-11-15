@@ -168,3 +168,24 @@ def test_zscale_stack_wide():
     b = process.zscale_limits([s.copy() for s in st], max_samples=5000)
     assert a == b and a[0] < a[1]
     assert a != process.zscale_limits(st[:1], max_samples=5000)
+
+
+def test_transient_and_sur_error_do_not_blank_a_star():
+    """Regression (flag-mask experiments 2026-11-14): the pipeline sets TRANSIENT/SUR_ERROR on a bright star's own
+    core, so masking them erased Barnard's and RW Aur (their spectra and light curves came back empty). They must
+    survive masking, while a genuinely bad pixel (HOT) in the same place must still be masked."""
+    grid = make_grid(RA0, DEC0, 0.1)
+    c = grid.npix // 2
+    for bit_name in ("TRANSIENT", "SUR_ERROR"):
+        bit = next(b for b, n in config.FLAG_BIT_NAMES.items() if n == bit_name)
+        assert bit not in config.FLAG_BITS_BAD, bit_name
+        h = make_fake_cutout(RA0, DEC0, npix=64)
+        h["FLAGS"].data[30:33, 30:33] = 1 << bit
+        f = process.process_cutout(_bytes(h), _ref(), grid)
+        assert np.isfinite(f.data[c - 1 : c + 2, c - 1 : c + 2]).all(), bit_name
+    hot = next(b for b, n in config.FLAG_BIT_NAMES.items() if n == "HOT")
+    assert hot in config.FLAG_BITS_BAD
+    h = make_fake_cutout(RA0, DEC0, npix=64)
+    h["FLAGS"].data[30:33, 30:33] = 1 << hot
+    f = process.process_cutout(_bytes(h), _ref(), grid)
+    assert np.isnan(f.data[c - 1 : c + 2, c - 1 : c + 2]).all()

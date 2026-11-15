@@ -604,3 +604,48 @@ def test_20_summary_edge_cases():
     s = motion.lightcurve_summary(one)
     assert np.isnan(s["chi2_red_constant"])
     assert s["per_pass_dmag"] == [{"pass": 0, "median_dmag": 0.0, "n": 1}]
+
+
+def _blank_cores(frames, radius=2.5):
+    yy, xx = np.indices((NPIX, NPIX))
+    core = (xx - LC_X) ** 2 + (yy - LC_Y) ** 2 < radius**2
+    for f in frames:
+        f.data[core] = np.nan
+        f.var[core] = np.nan
+    return frames
+
+
+def test_21_saturated_core_switches_the_light_curve_to_ring_photometry(fake_process):
+    """Why: R Dra's delivered core is NaN, so the aperture light curve came back EMPTY for a headline target. With
+    the core blanked the curve must switch (for ALL frames, never a mix) to PSF-wing photometry, still show a 2x
+    brightening as -0.75 mag, and say so in the summary."""
+    rng = np.random.default_rng(21)
+    # a bright, wide-winged star (sigma 1.6 px, like R Dra's saturated PSF): the light is NOT all inside the blanked core
+    frames = []
+    for p in range(2):
+        for lam in LC_LAMS:
+            amp = 3000.0 * _g(lam) * (2.0 if p == 1 else 1.0)
+            frames.append(
+                make_frame(
+                    render((NPIX, NPIX), [(LC_X, LC_Y, amp)], rng=rng, psf=1.6),
+                    60000 + 100 * p + 5 * lam,
+                    lam,
+                )
+            )
+    frames = fake_process.group_by_pass(_blank_cores(frames))
+    assert motion.lambda_matched_lightcurve(frames, LC_X, LC_Y, ring=False) == []  # the failure being fixed
+    pts = motion.lambda_matched_lightcurve(frames, LC_X, LC_Y)  # auto
+    assert pts and all(p.get("ring") for p in pts)
+    s = motion.lightcurve_summary(pts)
+    assert s["photometry"] == "ring"
+    d = {e["pass"]: e["median_dmag"] for e in s["per_pass_dmag"]}
+    assert d[1] == pytest.approx(-0.75, abs=0.1)
+
+
+def test_22_intact_core_keeps_aperture_photometry(fake_process):
+    """Ring mode is a fallback only: a normal star must keep the more accurate aperture photometry."""
+    rng = np.random.default_rng(22)
+    frames = fake_process.group_by_pass(_lc_frames(rng, n_pass=2))
+    pts = motion.lambda_matched_lightcurve(frames, LC_X, LC_Y)
+    assert pts and not any(p.get("ring") for p in pts)
+    assert "photometry" not in motion.lightcurve_summary(pts)

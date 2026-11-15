@@ -41,3 +41,40 @@ def aperture_flux(
     else:
         err = float(np.std(bkg_pix) * np.sqrt(n))
     return flux, err
+
+
+def ring_flux(
+    data: np.ndarray,
+    var: np.ndarray | None,
+    x: float,
+    y: float,
+    r_in: float,
+    r_out: float,
+    min_finite_frac: float = 0.9,
+) -> tuple[float, float]:
+    """Sum over the annulus r_in <= r <= r_out: photometry on the PSF wings of a star whose core is NaN.
+
+    The image is already background-subtracted by process.py, so no local background is removed. Masked pixels
+    are replaced by the mean of the finite ring pixels (so the sum always covers the whole ring); (nan, nan) when
+    fewer than `min_finite_frac` of the ring is finite or the ring leaves the image (a clipped ring would change
+    the flux scale between frames). err = sqrt(sum var), scaled the same way; without `var`, the ring scatter.
+    This is a RELATIVE flux: the ring holds a wavelength-dependent fraction of the total flux.
+    """
+    h, w = data.shape
+    if x - r_out < 0 or y - r_out < 0 or x + r_out > w - 1 or y + r_out > h - 1:
+        return float("nan"), float("nan")
+    yy, xx = np.indices(data.shape)
+    d2 = (xx - x) ** 2 + (yy - y) ** 2
+    ring = (d2 >= r_in * r_in) & (d2 <= r_out * r_out)
+    n = int(ring.sum())
+    v = data[ring]
+    fin = np.isfinite(v)
+    if n == 0 or fin.mean() < min_finite_frac:
+        return float("nan"), float("nan")
+    flux = float(np.mean(v[fin]) * n)
+    if var is not None:
+        vv = var[ring]
+        vf = np.isfinite(vv)
+        if vf.any():
+            return flux, float(np.sqrt(np.mean(vv[vf]) * n))
+    return flux, float(np.std(v[fin]) * np.sqrt(n))

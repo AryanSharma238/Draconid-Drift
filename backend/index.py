@@ -179,4 +179,4 @@ async def find_images(ra: float, dec: float, det: int) -> list[ImageRef]:
 
 
 def data_version() -> str:
-    return "sprint-2026-11-15"  # constant; bump manually if you re-run precompute after new data
+    return "sprint-2026-11-15-b"  # constant; bump manually. -b: TRANSIENT/SUR_ERROR no longer masked (2026-11-14)

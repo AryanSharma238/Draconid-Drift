@@ -9,30 +9,18 @@ not J2000. At 2025.9 the object is ~2' from it.
 Regenerate TARGETS with: python scripts/targets.py
 """
 
+import sys
+from pathlib import Path
+
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for backend.known_targets
+
 TARGET_EPOCH_JYEAR = 2025.9  # cutout centre epoch; keep equal to config.SPHEREX_MID_EPOCH
 
-# name -> (ra_j2000_deg, dec_j2000_deg, pmra_masyr [= mu_alpha* cos dec], pmdec_masyr, display name)
-CATALOG: dict[str, tuple[float, float, float, float, str]] = {
-    "wise0855": (133.81890825, -7.247048, -8123.7, 673.2, "WISE 0855-0714"),
-    "barnard": (269.4520769586187, 4.69336496657667, -801.551, 10362.394, "Barnard's Star"),
-    "epsindb": (331.04414658852124, -56.78284419511611, 3981.977, -2466.832, "eps Ind B"),
-    "rwaur": (76.95652603458, 30.40143817389, 7.23, -20.33, "RW Aur"),
-    "rdra": (248.16761083295, 66.75497941722, -20.643, 6.149, "R Dra"),
-    # SPRINT S3 extras: Sesame/SIMBAD J2000 position + PM, queried 2026-11-14 (backend.resolve.resolve_name_pm)
-    "luhman16": (162.328814, -53.319466, -2767.502, 356.856, "Luhman 16"),
-    "proxima": (217.42894222160578, -62.67949018907555, -3781.741, 769.465, "Proxima Cen"),
-    "wolf359": (164.1205036259475, 7.01472313480167, -3866.338, -2699.215, "Wolf 359"),
-    "teegarden": (43.25371580517042, 16.8812867194825, 3429.083, -3805.541, "Teegarden's Star"),
-    "mira": (34.836633758, -2.977637673, 9.33, -237.36, "Mira (omi Cet)"),
-    "betelgeuse": (88.792938991, 7.407063995, 27.54, 11.3, "Betelgeuse"),
-    "m42": (83.8201, -5.3876, 1.67, -0.3, "Orion Nebula (M42)"),
-    "pleiades": (56.65833, 24.17806, 19.997, -45.548, "Pleiades (M45)"),
-    "m31": (10.6847083, 41.26875, 0.0, 0.0, "Andromeda (M31)"),
-}
+from backend.known_targets import CATALOG  # single source of truth (also used by /api/resolve)
 
 
 def propagate(key: str, epoch_jyear: float = TARGET_EPOCH_JYEAR) -> tuple[float, float]:

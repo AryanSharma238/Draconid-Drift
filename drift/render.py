@@ -82,7 +82,7 @@ def to_png_b64(img, p):
     rgb = np.repeat(g[..., None], 3, axis=2)
     rgb[bad] = (206, 214, 235)
     buf = io.BytesIO()
-    Image.fromarray(rgb, "RGB").save(buf, format="PNG", optimize=True)
+    Image.fromarray(rgb, "RGB").save(buf, format="PNG", compress_level=1)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 

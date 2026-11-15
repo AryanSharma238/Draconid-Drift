@@ -23,6 +23,7 @@ from backend.models import make_grid
 from backend.sequence import (
     MODES,
     JsonResult,
+    group_refs_by_pass,
     lightcurve_result,
     load_frames,
     motion_result,
@@ -148,6 +149,31 @@ async def api_sequence(
     )
 
 
+@app.get("/api/counts")
+async def api_counts(ra: float, dec: float, size: float = config.DEFAULT_FOV_DEG, det: int = 6) -> Any:
+    """How many frames each mode will stream, from the footprint index alone (no S3 reads, ms).
+
+    `n_exposures` is the header's n_expected in mode all/lmdiff; `n_passes` is n_expected in mode pass.
+    The page calls this at load so both counts (and the "k of N" counter) are known before frames arrive."""
+    t0 = time.perf_counter()
+    ra, dec, size, msg = _validate(ra, dec, size, det, "all")
+    if msg:
+        return _err(422, msg)
+    try:
+        refs = sorted(await index.find_images(ra, dec, det), key=lambda r: r.t_mjd)
+    except FileNotFoundError as e:
+        log.error("counts: footprint index missing for det %d: %s", det, e)
+        return _err(503, f"index for detector {det} is not available")
+    passes = group_refs_by_pass(refs)
+    return JSONResponse(
+        {"det": det, "n_exposures": len(refs), "n_passes": (max(passes) + 1) if passes else 0},
+        headers={
+            "Cache-Control": f"public, max-age={config.L2_MAX_AGE_S}",
+            "Server-Timing": f"index;dur={(time.perf_counter() - t0) * 1000:.0f}",
+        },
+    )
+
+
 def _json_route(res: JsonResult, t0: float, name: str) -> Response:
     headers = {"Server-Timing": f"{name};dur={(time.perf_counter() - t0) * 1000:.0f}"}
     # Only complete results may be browser-cached (same short max-age as L2 stacks); empty/error ones never.
@@ -262,7 +288,7 @@ async def api_cube(
     wl_arr = np.array([f.lambda_um for f in frames], dtype=np.float64)
     pass_arr = np.array([f.pass_idx for f in frames], dtype=np.int32)
     buf = io.BytesIO()
-    np.savez_compressed(
+    np.savez(
         buf,
         cube=cube_arr,
         var=var_arr,

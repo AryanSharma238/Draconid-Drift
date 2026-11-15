@@ -436,7 +436,11 @@ def measure_movers(
 
 # --------------------------------------------------------------------- E4
 def lambda_matched_lightcurve(
-    frames: list[Frame], x: float, y: float, dlam_frac: float = config.LAMBDA_MATCH_FRAC
+    frames: list[Frame],
+    x: float,
+    y: float,
+    dlam_frac: float = config.LAMBDA_MATCH_FRAC,
+    ring: bool | None = None,
 ) -> list[dict]:
     """Lambda-matched light curve at a fixed pixel position (tasks/09-edge.md E4).
 
@@ -449,6 +453,25 @@ def lambda_matched_lightcurve(
     from backend import photometry, process  # Track B / E own these modules
 
     frames = process.group_by_pass(frames)
+    ap = (config.LC_APERTURE_R, config.LC_ANNULUS_R_IN, config.LC_ANNULUS_R_OUT)
+    if ring is None:
+        # a saturated/NaN core leaves most apertures unusable: use PSF-wing photometry for the WHOLE curve
+        usable = sum(bool(np.isfinite(photometry.aperture_flux(f.data, f.var, x, y, *ap)[0])) for f in frames)
+        ring = bool(frames) and usable / len(frames) < config.RING_AUTO_APERTURE_FRAC
+        if ring:
+            log.info(
+                "lightcurve: aperture usable in %d of %d frames, switching to ring photometry",
+                usable,
+                len(frames),
+            )
+
+    def phot(data: np.ndarray, var: np.ndarray | None) -> tuple[float, float]:
+        if ring:
+            return photometry.ring_flux(
+                data, var, x, y, config.RING_R_IN, config.RING_R_OUT, config.RING_MIN_FINITE_FRAC
+            )
+        return photometry.aperture_flux(data, var, x, y, *ap)
+
     out: list[dict] = []
     n_no_match = n_bad_flux = n_low_template = 0
     for f in frames:
@@ -458,9 +481,8 @@ def lambda_matched_lightcurve(
             log.info("lightcurve: no wavelength match for %s", f.ref.obs_id)
             continue
         tmpl, tmpl_var = process.coadd(matches)
-        ap = (config.LC_APERTURE_R, config.LC_ANNULUS_R_IN, config.LC_ANNULUS_R_OUT)
-        f_i, e_i = photometry.aperture_flux(f.data, f.var, x, y, *ap)
-        f_t, e_t = photometry.aperture_flux(tmpl, tmpl_var, x, y, *ap)
+        f_i, e_i = phot(f.data, f.var)
+        f_t, e_t = phot(tmpl, tmpl_var)
         if not (np.isfinite([f_i, e_i, f_t, e_t]).all() and f_i > 0 and e_i > 0 and e_t > 0):
             n_bad_flux += 1
             log.info(
@@ -486,6 +508,7 @@ def lambda_matched_lightcurve(
                 "ratio": float(ratio),
                 "err": err,
                 "dmag": float(-2.5 * np.log10(ratio)),
+                **({"ring": True} if ring else {}),
             }
         )
     out.sort(key=lambda p: p["t_yr"])
@@ -517,4 +540,7 @@ def lightcurve_summary(points: list[dict]) -> dict:
         ratio = np.array([p["ratio"] for p in points])
         err = np.array([p["err"] for p in points])
         chi2 = float(np.sum(((ratio - 1.0) / err) ** 2) / len(points))
-    return {"per_pass_dmag": per_pass, "chi2_red_constant": chi2}
+    summary = {"per_pass_dmag": per_pass, "chi2_red_constant": chi2}
+    if any(p.get("ring") for p in points):
+        summary["photometry"] = "ring"  # PSF-wing photometry (saturated core), see config.RING_*
+    return summary

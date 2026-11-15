@@ -16,7 +16,7 @@ import httpx
 from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
 
-from backend import config
+from backend import config, known_targets
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +89,9 @@ def resolve_name_pm(name: str) -> dict | None:
     If Sesame itself fails (network/HTTP/parse), log and fall back to SkyCoord.from_name with pm 0.
     None only when the name is genuinely unknown.
     """
+    local = known_targets.lookup(name)
+    if local is not None:
+        return local
     url = SESAME_URL + quote(name)
     try:
         r = httpx.get(url, follow_redirects=True, timeout=SESAME_TIMEOUT_S)

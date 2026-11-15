@@ -232,3 +232,33 @@ def test_warm_worker_imports_what_the_jobs_need_and_returns_pid():
     from backend.sequence import warm_worker
 
     assert warm_worker(modules=("backend.process",), s3=False) == os.getpid()
+
+
+async def test_counts_match_what_each_mode_streams(client, stubs):
+    # why: the page shows "(n) | (N)" and "k of N" from /api/counts before any frame arrives, so they must equal
+    # the header's n_expected in mode all and in mode pass; a mismatch would show a wrong total on screen.
+    c = (await client.get("/api/counts", params={k: Q[k] for k in ("ra", "dec", "size", "det")})).json()
+    assert stubs.fetch_calls == 0  # index only: no S3 reads
+    n_all = lines(await client.get("/api/sequence", params={**Q, "mode": "all"}))[1]["n_expected"]
+    n_pass = lines(await client.get("/api/sequence", params={**Q, "mode": "pass"}))[1]["n_expected"]
+    assert (c["n_exposures"], c["n_passes"]) == (n_all, n_pass)
+    assert c["n_exposures"] == len(MJDS) and c["n_passes"] >= 1
+
+
+async def test_counts_no_coverage_is_zero_not_error(client, monkeypatch):
+    async def none(ra, dec, det):
+        return []
+
+    monkeypatch.setattr(index, "find_images", none)
+    r = await client.get("/api/counts", params={k: Q[k] for k in ("ra", "dec", "size", "det")})
+    assert r.status_code == 200 and r.json() == {"det": DET, "n_exposures": 0, "n_passes": 0}
+
+
+async def test_counts_missing_index_is_503_and_bad_params_422(client, monkeypatch):
+    async def boom(ra, dec, det):
+        raise FileNotFoundError("idx")
+
+    monkeypatch.setattr(index, "find_images", boom)
+    base = {k: Q[k] for k in ("ra", "dec", "size", "det")}
+    assert (await client.get("/api/counts", params=base)).status_code == 503
+    assert (await client.get("/api/counts", params={**base, "size": 0.33})).status_code == 422

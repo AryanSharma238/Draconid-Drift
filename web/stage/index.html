@@ -48,15 +48,15 @@
       <div class="lab"><h2 id="wiseH">AllWISE</h2><p id="wiseCap">2010</p></div></section>
     <section class="panel img" id="pSpx"><canvas id="spxCv"></canvas><canvas class="hl" id="spxHl"></canvas>
       <div class="lab"><h2>SPHEREx</h2><p id="spxCap"></p></div>
-      <div class="modes">
-        <button id="timeBtn" type="button" title="Past and future view (coming next)">Past &amp; future</button>
-        <button id="cmpBtn" type="button" aria-pressed="true">Hide comparison</button>
-      </div>
+      <button id="cmpBtn" type="button" aria-pressed="true" aria-label="Hide the comparison image" title="Hide the comparison image">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M12 5v14"/></svg>
+      </button>
       <div class="speed" role="group" aria-label="Playback speed">
         <button type="button" data-s="0.5">0.5×</button><button type="button" data-s="1" class="on">1×</button><button type="button" data-s="2">2×</button>
       </div></section>
     <aside class="panel" id="info">
-      <div class="head"><h1 class="big" id="iName"></h1><p class="kind" id="iKind"></p></div>
+      <div class="head"><h1 class="big" id="iName"></h1><p class="kind" id="iKind"></p>
+        <button id="timeBtn" type="button" title="See this patch in the past and the future (coming next)">Past &amp; future</button></div>
       <div class="facts" id="iFacts"></div>
       <p class="coord" id="iCoord"></p>
       <div class="blk"><h3 id="specH">Spectrum</h3><div class="spec" id="iSpec"></div></div>

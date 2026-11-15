@@ -15,7 +15,7 @@ from .clean import flatten
 from .render import stretch_params, to_dark_jpeg_b64
 
 DETS = (1, 2, 3, 4, 5, 6)
-BAND_FRAMES = 24          # exposures fetched per extra detector (evenly spread in time)
+BAND_FRAMES = 12          # exposures fetched per extra detector (evenly spread in time)
 UJY_PER_SUM = (SPHEREX_PIXEL_ARCSEC / 206264.806) ** 2 * 1e12   # MJy/sr summed over pixels -> microjansky
 NOTE = {1: "starlight; hot stars shine brightest", 2: "water vapour dips in cool stars",
         3: "sees through dust", 4: "water ice and glowing dust", 5: "carbon dioxide ice", 6: "carbon monoxide ice, warm dust"}

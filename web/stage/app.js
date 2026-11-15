@@ -635,7 +635,7 @@ function paintWise(res) {
     for (let i = 0; i < d.length; i += 64) v.push(d[i]);
     v.sort((a, b) => a - b);
     const med = v[Math.floor(v.length * 0.5)], sg = Math.max(1, v[Math.floor(v.length * 0.84)] - med);
-    let lo = med + 2 * sg, hi = Math.max(lo + 14 * sg, v[Math.floor(v.length * 0.995)]);   // noise stays black
+    let lo = med + 1 * sg, hi = Math.max(lo + 14 * sg, v[Math.floor(v.length * 0.995)]);   // noise stays black
     if (lo > 200) { lo = v[Math.floor(v.length * 0.6)]; hi = 255; }   // a bright star fills the field: stretch only its glow
     for (let i = 0; i < d.length; i += 4) {
       const t = Math.min(1, Math.max(0, (d[i] - lo) / (hi - lo))), q = Math.asinh(t * 8) / Math.asinh(8);
@@ -734,13 +734,13 @@ function drawSpx() {
 app.classList.add("split");
 function syncCmp(res) {
   const on = app.classList.contains("split");
-  $("cmpBtn").setAttribute("aria-pressed", String(on));
-  $("cmpBtn").textContent = on ? "Hide comparison" : `Compare with ${res?.compare?.year || "~2000"}`;
+  const t = on ? "Hide the comparison image" : `Compare with ${res?.compare?.name || "2MASS"} (${res?.compare?.year || "~2000"})`;
+  $("cmpBtn").setAttribute("aria-pressed", String(on)); $("cmpBtn").setAttribute("aria-label", t); $("cmpBtn").title = t;
 }
 $("cmpBtn").onclick = () => {
   const on = !app.classList.contains("split");
   app.classList.toggle("split", on); $("cmpBtn").setAttribute("aria-pressed", String(on));
-  $("cmpBtn").textContent = on ? "Hide comparison" : `Compare with ${last_res?.compare?.year || "~2000"}`;
+  syncCmp(last_res);
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase]; preparePlayer(P); [tpos, P.curDates, P.curBase] = keep; drawSpx(); } if (last_res) paintWise(last_res); drawHl(); });
 };
 window.addEventListener("keydown", e => {

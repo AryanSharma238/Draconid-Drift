@@ -76,9 +76,46 @@ if "ra" in qp and "dec" in qp and S.result is None and S.seen is None:
     except Exception as e:
         pass
 
+@st.cache_resource
+def _band_jobs():
+    """Spectrum jobs started as soon as a target's first view is ready, so they run while the page animates."""
+    from concurrent.futures import ThreadPoolExecutor
+    return {}, ThreadPoolExecutor(2)
+
+
+def _band_args(r, key):
+    tg = [("target", float(r["ra"]), float(r["dec"]), float(r.get("pmra") or 0), float(r.get("pmdec") or 0),
+           float(r.get("epoch") or MID_EPOCH))] + [
+        (str(i), float(o["ra"]), float(o["dec"]), float(o.get("pmra") or 0), float(o.get("pmdec") or 0),
+         float(o.get("epoch") or MID_EPOCH)) for i, o in enumerate(r.get("objects") or [])]
+    return (str(key or r["name"]), float(r["ra_c"]), float(r["dec_c"]), float(r["field_deg"]),
+            r.get("detector") or "SPHEREx-D3", tuple(tg))
+
+
+def start_bands(r, key):
+    jobs, ex = _band_jobs()
+    a = _band_args(r, key)
+    if a not in jobs:
+        if len(jobs) > 16:
+            jobs.clear()
+        jobs[a] = ex.submit(compute_bands, *a)
+    return jobs[a]
+
+
 @st.cache_data(show_spinner=False, max_entries=32)
 def cached_bands(name, ra_c, dec_c, field_deg, det, targets):
     """All six detector ranges for the stage's field, and a spectrum for each target position."""
+    return start_bands_result(name, ra_c, dec_c, field_deg, det, targets)
+
+
+def start_bands_result(*a):
+    jobs, ex = _band_jobs()
+    f = jobs.get(a) or ex.submit(compute_bands, *a)
+    jobs[a] = f
+    return f.result()
+
+
+def compute_bands(name, ra_c, dec_c, field_deg, det, targets):
     import hashlib
     import json
     from drift.bands import all_bands
@@ -97,12 +134,7 @@ if req and req.get("nonce") != S.seen and req.get("type") == "bands":
     r = S.result
     if r and r.get("nonce") == req.get("for") and "bands" not in r:
         try:
-            tg = [("target", float(r["ra"]), float(r["dec"]), float(r.get("pmra") or 0), float(r.get("pmdec") or 0),
-                   float(r.get("epoch") or MID_EPOCH))] + [
-                (str(i), float(o["ra"]), float(o["dec"]), float(o.get("pmra") or 0), float(o.get("pmdec") or 0),
-                 float(o.get("epoch") or MID_EPOCH)) for i, o in enumerate(r.get("objects") or [])]
-            b = cached_bands(str(req.get("key") or r["name"]), float(r["ra_c"]), float(r["dec_c"]), float(r["field_deg"]),
-                             r.get("detector") or "SPHEREx-D3", tuple(tg))
+            b = cached_bands(*_band_args(r, req.get("key")))
             S.result = dict(r, bands=b["bands"], spectra=b["spectra"])
         except Exception:
             import traceback
@@ -144,6 +176,10 @@ if req and req.get("nonce") != S.seen:
                 except Exception:
                     pass
             S.result = payload
+            try:
+                start_bands(payload, key)          # begin the five other detectors now, while the page animates
+            except Exception:
+                pass
         except pipeline.DataFetchError as e:
             S.result, S.error = None, f"No SPHEREx images here yet ({e}). Try another spot."
         except Exception as e:  # keep the page alive, and leave the full traceback in the app log

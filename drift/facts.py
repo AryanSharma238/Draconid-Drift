@@ -73,11 +73,16 @@ def _f(r, k):
 
 
 def simbad_row(ra, dec, radius_arcsec=15.0):
-    """The best-known SIMBAD object within `radius_arcsec`, or None."""
+    """The best-known SIMBAD object within `radius_arcsec`, or None. (Two quick queries at once: sorting on the
+    server is slow, so famous objects come from a well-cited-only query and anything else from a plain one.)"""
+    from concurrent.futures import ThreadPoolExecutor
     from .naming import _tap
-    rows = _tap("SELECT TOP 20 main_id, otype, sp_type, plx_value, rvz_redshift, pmra, pmdec, galdim_majaxis AS majax, nbref "
-                f"FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_arcsec / 3600:.6f}))",
-                6.0) or []
+    cols = "main_id, otype, sp_type, plx_value, rvz_redshift, pmra, pmdec, galdim_majaxis AS majax, nbref"
+    cone = f"1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},{dec:.6f},{radius_arcsec / 3600:.6f}))"
+    with ThreadPoolExecutor(2) as ex:
+        a = ex.submit(_tap, f"SELECT TOP 50 {cols} FROM basic WHERE {cone} AND nbref >= 50", 4.0)
+        b = ex.submit(_tap, f"SELECT TOP 50 {cols} FROM basic WHERE {cone}", 4.0)
+        rows = (a.result() or []) + (b.result() or [])
     if not rows:
         return None
     return max(rows, key=lambda r: int(r.get("nbref") or 0))

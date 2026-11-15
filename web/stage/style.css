@@ -294,3 +294,10 @@ body{font-size:15px}
 #land .sub{margin-top:6px;font-size:clamp(16px,1.4vw,20px);color:rgba(255,255,255,.82)}
 #land .cta{margin-top:30px}
 #land .sub{max-width:none;white-space:nowrap}
+
+#cmpBtn{position:absolute;top:20px;right:20px;z-index:3;width:40px;height:40px;padding:0;display:grid;place-items:center;border-radius:12px}
+#cmpBtn[aria-pressed=true] svg path{stroke:#fff}
+#app.shown #cmpBtn{opacity:1}
+#info .head{position:relative}
+#timeBtn{margin-top:12px;padding:7px 14px;font-size:13px}
+#pSpx .modes{display:none}

@@ -331,12 +331,19 @@ def crop_hdul(hdul: fits.HDUList, grid: Grid) -> bytes:
 def _read_s3_box(ref: ImageRef, grid: Grid) -> bytes:
     """Blocking, with retries on transient I/O errors. A missing key is not retried."""
     last: Exception | None = None
+    uri = ref.uri
     for attempt in range(config.FETCH_RETRIES):
         try:
-            with _open_s3(ref.uri, grid) as hdul:
+            with _open_s3(uri, grid) as hdul:
                 return crop_hdul(hdul, grid)
         except FileNotFoundError:
-            raise
+            # IRSA reprocessed some exposures and moved them: .../l2b-v27-.../x_l2b-v27-...fits now lives at
+            # .../l2b_retry-v27-.../x_l2b_retry-v27-...fits. Try that name once before giving up.
+            alt = uri.replace("/l2b-v", "/l2b_retry-v").replace("_l2b-v", "_l2b_retry-v")
+            if alt == uri:
+                raise
+            uri = alt
+            continue
         except (OSError, TimeoutError) as e:
             last = e
             log.warning("s3 read %s attempt %d failed: %r", ref.uri, attempt + 1, e)

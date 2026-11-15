@@ -206,9 +206,12 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0):
 
 # ------------------------------------------------------------------- run ----
 def run(spec: Spec, mode="target", same_colour=False, demo=False, use_cache=True, n_null=300,
-        progress=None, null_progress=None, seed=0):
+        progress=None, null_progress=None, seed=0, build=True, max_frames=None):
     t_start = time.perf_counter()
     cube, info = load_frames(spec, demo=demo, use_cache=use_cache, progress=progress, seed=seed)
+    if max_frames and cube.n > max_frames:          # very deep fields: even subset in time
+        keep = np.unique(np.linspace(0, cube.n - 1, max_frames).round().astype(int))
+        cube = cube.subset(np.argsort(cube.mjd)[keep])
     cube = flatten(cube)
     if same_colour:
         cube = select_same_colour(cube)
@@ -232,7 +235,7 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, use_cache=True
                      seed=seed + 1, progress=null_progress)
     v_tr = (verdict["best"]["vx"], verdict["best"]["vy"]) if mode == "blind" else v_exp
     payload = build_payload(cube, pos if in_field else None, v_exp, v_tr,
-                            best_track=verdict.get("best"))
+                            best_track=verdict.get("best")) if build else None
 
     total_s = time.perf_counter() - t_start
     info["total_s"] = total_s
@@ -246,4 +249,5 @@ def run(spec: Spec, mode="target", same_colour=False, demo=False, use_cache=True
         notes.append(f"{cube.n} of {cube.n_found or cube.n} {cube.detector} images used "
                      f"(wavelength {np.nanmin(cube.wl):.2f}-{np.nanmax(cube.wl):.2f} µm).")
     return dict(cube=cube, verdict=verdict, payload=payload, notes=notes, info=info,
-                v_expected=v_exp, center=(x0, y0), in_field=in_field)
+                v_expected=v_exp, center=(x0, y0), in_field=in_field,
+                mark_fn=(pos if in_field else None))

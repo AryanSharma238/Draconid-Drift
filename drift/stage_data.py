@@ -1,0 +1,99 @@
+"""Everything the full-screen stage needs once a target has been checked."""
+from __future__ import annotations
+
+import numpy as np
+from astropy.time import Time
+
+from . import SPHEREX_PIXEL_ARCSEC
+from .clean import burst_groups
+from .render import flip_y, stretch_params, to_dark_jpeg_b64
+
+# The archival comparison image is taken at the SPHEREx wavelength: AllWISE W1 (3.4 um) for D4, W2 (4.6 um) for D5/D6.
+COMPARE = {
+    "SPHEREx-D4": dict(name="AllWISE", band="W1", um=3.4, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order=8, fmt="jpg"),
+    "SPHEREx-D5": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg"),
+    "SPHEREx-D6": dict(name="AllWISE", band="W2", um=4.6, url="https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order=8, fmt="jpg"),
+}
+DEFAULT_COMPARE = COMPARE["SPHEREx-D4"]
+SMOOTH_K = 5          # frames averaged per displayed frame (same observing burst only)
+
+
+def classify(v):
+    """Plain label for what sits at this position."""
+    c = v["checks"]
+    if c["strength"]["nu"] < -3.0:
+        return "UNRELIABLE"
+    src = max(c["strength"]["nu"], c["motion"].get("nu_static", 0.0))
+    all_ok = c["halves"]["ok"] and c["leave_one_out"]["ok"] and c["flags"]["ok"]
+    if src < 6:
+        return "NOISE"
+    if not v["moving"]:
+        return "STAR"
+    if v["confidence"] >= 0.99 and all_ok:
+        return "MOVER"
+    if v["confidence"] >= 0.95:
+        return "MOVER?"
+    return "SOURCE"
+
+
+_WORDS = {"UNRELIABLE": ("Unreliable here", "bad"), "NOISE": ("Nothing stands out", "dim"),
+          "STAR": ("Star, not moving", "info"), "MOVER?": ("Moving, unconfirmed", "warn"),
+          "MOVER": ("Moving object", "good"), "SOURCE": ("Source, motion unclear", "warn")}
+
+
+def verdict_summary(v):
+    word, tone = _WORDS[classify(v)]
+    c = v["checks"]
+    conf = (f"> {100 * v['confidence_floor']:.1f}%" if v["confidence_is_bound"] else f"{100 * v['confidence']:.0f}%")
+    if tone == "bad":
+        conf = "n/a"
+    checks = [dict(k="Signal", ok=bool(c["strength"]["nu"] >= 6)),
+              dict(k="Motion", ok=bool(c["motion"]["dchi2"] > 0)),
+              dict(k="Both halves", ok=bool(c["halves"]["ok"])),
+              dict(k="Every frame", ok=bool(c["leave_one_out"]["ok"])),
+              dict(k="Clean pixels", ok=bool(c["flags"]["ok"]))]
+    return dict(word=word, tone=tone, conf=conf, checks=checks)
+
+
+def smoothed_frames(cube, k=SMOOTH_K):
+    """Each displayed frame = noise-weighted mean of up to k neighbouring frames of the same burst.
+    Frames in one burst are taken within days, so nothing real moves between them, while the noise drops ~sqrt(k)."""
+    n = cube.n
+    out = np.empty_like(cube.cube)
+    order = np.argsort(cube.mjd)
+    groups = burst_groups(cube.mjd[order])
+    for g in groups:
+        idx = order[np.asarray(g)]
+        for j, i in enumerate(idx):
+            lo, hi = max(0, j - k // 2), min(len(idx), j + k // 2 + 1)
+            sel = idx[lo:hi]
+            d, v = cube.cube[sel], cube.var[sel]
+            w = np.where(np.isfinite(d) & np.isfinite(v) & (v > 0), 1.0 / np.where(v > 0, v, 1.0), 0.0)
+            s = (np.nan_to_num(d) * w).sum(0)
+            ws = w.sum(0)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                out[i] = np.where(ws > 0, s / ws, np.nan)
+    return out
+
+
+def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0):
+    cube = res["cube"]
+    n, ny, nx = cube.cube.shape
+    sm = smoothed_frames(cube)
+    p = stretch_params(sm)
+    cmp = COMPARE.get(cube.detector, DEFAULT_COMPARE)
+    near = np.isfinite(cube.wl) & (np.abs(cube.wl - cmp["um"]) < 0.5)   # show the frames at the comparison wavelength
+    order = [i for i in np.argsort(cube.mjd) if near[i]] if near.sum() >= 10 else list(np.argsort(cube.mjd))
+    frames, marks, dates, wl = [], [], [], []
+    for i in order:
+        frames.append(to_dark_jpeg_b64(sm[i], p))
+        m = res["mark_fn"](cube.mjd[i]) if res.get("mark_fn") else None
+        marks.append(None if m is None else [round((m[0] + 0.5) / nx, 4), round((flip_y(m[1], ny) + 0.5) / ny, 4)])
+        dates.append(Time(float(cube.mjd[i]), format="mjd").iso[:10])
+        wl.append(None if not np.isfinite(cube.wl[i]) else round(float(cube.wl[i]), 2))
+    ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
+    return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
+                ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
+                nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl,
+                detector=cube.detector, compare=cmp,
+                verdict=verdict_summary(res["verdict"]), source=cube.source)

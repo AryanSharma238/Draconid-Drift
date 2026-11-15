@@ -840,8 +840,38 @@ qEl.addEventListener("keydown", e => {
   else if (e.key === "Enter" && items.length) { choose(items[Math.max(0, sel)]); }
 });
 function parseCoords(q) {
-  const m = q.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
-  if (m.length === 2 && m.every(isFinite) && Math.abs(m[1]) <= 90) return { key: "custom", name: `${m[0].toFixed(3)}°, ${m[1] >= 0 ? "+" : ""}${m[1].toFixed(3)}°`, ra: ((m[0] % 360) + 360) % 360, dec: m[1], kind: "Coordinates", epoch: args.mid };
+  let s = q.trim();
+  // Check for sexagesimal like 19h 43m 40.6s -46d 39m 15s or RA 19h 43m 40.6s Dec -46° 39' 15"
+  const sexaRegex = /^(?:RA\s*:?\s*)?(\d+)[h\s:]+(\d+)[m\s:]+([\d.]+)[s\s,]+(?:Dec\s*:?\s*)?([+-]?\d+)[d\s:°]+(\d+)[m\s:\x27]+([\d.]+)s?["\x27]?$/i;
+  const match = s.match(sexaRegex);
+  if (match) {
+    const h = +match[1], m = +match[2], sec = +match[3];
+    const dSign = match[4].startsWith("-") ? -1 : 1;
+    const d = Math.abs(+match[4]), dm = +match[5], dsec = +match[6];
+    const ra = ((h + m / 60 + sec / 3600) * 15 + 360) % 360;
+    const dec = dSign * (d + dm / 60 + dsec / 3600);
+    return {
+      key: "custom",
+      name: `${ra.toFixed(3)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(3)}°`,
+      ra,
+      dec,
+      kind: "Coordinates (Sexagesimal)",
+      epoch: args.mid,
+    };
+  }
+  // Check for decimal with or without RA/Dec prefix, e.g. "RA 295.919, Dec -46.654" or "295.919, -46.654"
+  s = s.replace(/RA\s*:?\s*/gi, "").replace(/Dec\s*:?\s*/gi, "");
+  const parts = s.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
+  if (parts.length === 2 && parts.every(isFinite) && Math.abs(parts[1]) <= 90) {
+    return {
+      key: "custom",
+      name: `${parts[0].toFixed(3)}°, ${parts[1] >= 0 ? "+" : ""}${parts[1].toFixed(3)}°`,
+      ra: ((parts[0] % 360) + 360) % 360,
+      dec: parts[1],
+      kind: "Coordinates",
+      epoch: args.mid,
+    };
+  }
   return null;
 }
 const esc = s => s.replace(/'/g, "''");
@@ -915,22 +945,105 @@ function openAbout(which = "how") {
   if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
   document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
   document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));
-  if (which === "targets") {
-    const ul = $("tlist"); ul.innerHTML = "";
-    presetItems().forEach(p => { const li = document.createElement("li"), b = document.createElement("button");
-      b.innerHTML = `<span></span><small></small>`; b.firstChild.textContent = p.name; b.lastChild.textContent = p.kind || "";
-      b.onclick = () => { closeAbout(); choose(p); }; li.appendChild(b); ul.appendChild(li); });
-  }
 }
 function closeAbout() { page = null; app.classList.remove("about"); document.querySelectorAll("#bar .navb").forEach(b => b.classList.remove("on")); }
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
+/* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
+const MOVER_CATALOG = [
+  // 5 NASA Challenge Presets
+  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge mover (10.3″/yr)", tag: "Challenge" },
+  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Challenge mover · Brown dwarf pair", tag: "Challenge" },
+  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Challenge mover · Cold brown dwarf (8.1″/yr)", tag: "Challenge" },
+  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Young variable star", tag: "Challenge" },
+  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Mira pulsating star", tag: "Challenge" },
+  // Additional Fast-Moving Stars
+  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)", tag: "Fast Mover" },
+  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary system (5.3″/yr)", tag: "Fast Mover" },
+  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)", tag: "Fast Mover" },
+];
+
+const RANDOM_TARGETS = [
+  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
+  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system", fov: 450 },
+  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
+  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant", fov: 400 },
+  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard calibrator star", fov: 350 },
+  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Open star cluster", fov: 1200 },
+  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
+  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
+];
+
+const sideDrawer = $("side-drawer");
+const drawerToggle = $("drawer-toggle");
+const drawerClose = $("drawer-close");
+const drawerMovers = $("drawer-movers");
+const drawerRandoms = $("drawer-randoms");
+const randomStarBtn = $("random-star-btn");
+
+function initSideDrawer() {
+  if (!drawerMovers || !drawerRandoms) return;
+  drawerMovers.innerHTML = "";
+  drawerRandoms.innerHTML = "";
+
+  function renderList(list, container) {
+    list.forEach(star => {
+      const li = document.createElement("li");
+      li.className = "drawer-star-item";
+      li.innerHTML = `
+        <div class="star-item-main">
+          <div class="star-name">${star.name}</div>
+          <div class="star-desc">${star.kind || ""}</div>
+        </div>
+        ${star.tag ? `<span class="star-badge ${star.tag === 'Challenge' ? 'badge-chal' : 'badge-mover'}">${star.tag}</span>` : ""}
+      `;
+      li.onclick = () => {
+        choose(star);
+      };
+      container.appendChild(li);
+    });
+  }
+
+  renderList(MOVER_CATALOG, drawerMovers);
+  renderList(RANDOM_TARGETS, drawerRandoms);
+
+  if (randomStarBtn) {
+    randomStarBtn.onclick = () => {
+      const pool = [...MOVER_CATALOG, ...RANDOM_TARGETS];
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      choose(pick);
+    };
+  }
+
+  if (drawerToggle) {
+    drawerToggle.onclick = () => {
+      sideDrawer.classList.toggle("open");
+    };
+  }
+  if (drawerClose) {
+    drawerClose.onclick = () => {
+      sideDrawer.classList.remove("open");
+    };
+  }
+}
+
+function openDrawer() {
+  if (sideDrawer) {
+    sideDrawer.classList.add("open");
+  }
+}
+
+initSideDrawer();
+
 /* ---------------------------------------------------------------- landing: Demo / Explore */
 app.classList.add("landing");
 intro.preload().catch(() => {});
 const leaveLanding = () => app.classList.remove("landing");
-$("exploreBtn").onclick = leaveLanding;
+$("exploreBtn").onclick = () => {
+  leaveLanding();
+  openDrawer();
+};
 $("demoBtn").onclick = () => {
   intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
 };

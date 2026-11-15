@@ -176,7 +176,21 @@ function bindSky() {
     // the field is the square that covers the whole highlighted area, centred on it
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
     if (side > 5400) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`); }
-    go({ key: "custom", name: "Selected area", ra: c[0], dec: c[1], pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+    
+    // Auto-snap to nearest notable star / quasar / deep-sky object if within the selected box
+    let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
+    const boxRadiusDeg = Math.max(side / 7200, 0.02);
+    if (CATALOG && CATALOG.length) {
+      let best = null, bestDist = boxRadiusDeg;
+      for (const obj of CATALOG) {
+        const d = sepDeg([obj.ra, obj.dec], c);
+        if (d < bestDist) { bestDist = d; best = obj; }
+      }
+      if (best) {
+        targetRa = best.ra; targetDec = best.dec; targetName = best.name;
+      }
+    }
+    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
   }, true);
 }
 
@@ -290,7 +304,35 @@ async function go(item) {
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 7500);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
+  startProgressBar();
   setView("waiting"); tryReveal();
+}
+
+let progInterval = null;
+function startProgressBar() {
+  stopProgressBar();
+  const bar = $("prog-bar");
+  if (!bar) return;
+  bar.style.width = "5%";
+  let progress = 5;
+  progInterval = setInterval(() => {
+    // Smooth asymptotic progress while awaiting EC2 data (moves up to 92%)
+    if (progress < 40) progress += 8;
+    else if (progress < 70) progress += 4;
+    else if (progress < 92) progress += 1.5;
+    bar.style.width = Math.min(progress, 94) + "%";
+  }, 250);
+}
+function stopProgressBar(complete = false) {
+  if (progInterval) { clearInterval(progInterval); progInterval = null; }
+  const bar = $("prog-bar");
+  if (!bar) return;
+  if (complete) {
+    bar.style.width = "100%";
+    setTimeout(() => { bar.style.width = "0%"; }, 400);
+  } else {
+    bar.style.width = "0%";
+  }
 }
 
 /* ---------------------------------------------------------------- reveal (squish into the SPHEREx panel) */
@@ -302,8 +344,9 @@ const geom = () => {
 async function tryReveal() {
   const res = args.result;
   if (!req || !req.arrived || view === "view" || view === "settling") return;
-  if (args.error) { toast(args.error); return abortHome(); }
+  if (args.error) { stopProgressBar(false); toast(args.error); return abortHome(); }
   if (!res || res.nonce !== req.nonce) return;
+  stopProgressBar(true);
   setView("settling");
   fillPage(res);
   await loadFrames(res);

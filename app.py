@@ -73,14 +73,15 @@ if req and req.get("nonce") != S.seen:
         else:
             fov = min(max(float(req.get("fov") or 180.0), 60.0), 5400.0)
             name_job = None
-            if req.get("name") in (None, "", "Selected area", "Selected patch"):
-                # name the patch by what is actually in it (SIMBAD), looked up while the frames are fetched
+            req_name = req.get("name")
+            if req_name in (None, "", "Selected area", "Selected patch"):
+                # name the patch by what is actually in it (SIMBAD), looked up with a fast 3.0s timeout
                 from concurrent.futures import ThreadPoolExecutor
                 from drift.naming import name_field
                 name_job = ThreadPoolExecutor(1).submit(name_field, round(float(req["ra"]), 4), round(float(req["dec"]), 4),
                                                         round(fov / 3600.0, 4))
-                req["name"] = "Selected area"
-            spec = pipeline.Spec(name=str(req.get("name") or "Selected area")[:60], ra=float(req["ra"]), dec=float(req["dec"]),
+                req_name = "Selected area"
+            spec = pipeline.Spec(name=str(req_name)[:60], ra=float(req["ra"]), dec=float(req["dec"]),
                                  pmra=float(req.get("pmra") or 0.0), pmdec=float(req.get("pmdec") or 0.0),
                                  epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D3")
             spec = pipeline.framed(spec)
@@ -89,7 +90,7 @@ if req and req.get("nonce") != S.seen:
             payload = dict(payload, nonce=req["nonce"])
             if key not in PRESETS and name_job is not None:
                 try:
-                    payload["name"] = name_job.result(timeout=15)
+                    payload["name"] = name_job.result(timeout=3.0)
                 except Exception:
                     pass
             S.result = payload

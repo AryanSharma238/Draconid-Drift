@@ -143,15 +143,40 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
         return None
 
 
+LIVE_MAX_FRAMES = 60    # without the EC2 server, fetch at most this many exposures (evenly spread in time)
+LIVE_MAX_DEG = 0.5      # ... and at most this field size
+
+
+async def _load_capped(grid, det):
+    import contextlib
+    from backend import index as _index
+    from backend.sequence import Loaded, fetch_interleaved, group_refs_by_pass
+    refs = sorted(await _index.find_images(grid.ra, grid.dec, det), key=lambda r: r.t_mjd)
+    if len(refs) > LIVE_MAX_FRAMES:
+        keep = np.unique(np.linspace(0, len(refs) - 1, LIVE_MAX_FRAMES).round().astype(int))
+        refs = [refs[i] for i in keep]
+    pass_of = group_refs_by_pass(refs)
+    got, failed = {}, []
+    if refs:
+        async with contextlib.aclosing(fetch_interleaved(refs, grid, pass_of)) as it:
+            async for i, frame, err in it:
+                if err is not None or frame is None:
+                    failed.append((refs[i].obs_id, err or "no frame"))
+                else:
+                    frame.pass_idx = pass_of[i]
+                    got[i] = frame
+    return Loaded(refs, [got[i] for i in sorted(got)], failed)
+
+
 def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int, detector_str: str) -> Cube:
     """Run `backend.sequence.load_frames` directly using the local S3 footprint index + S3 byte-range reads."""
-    grid = backend_make_grid(ra, dec, size_deg)
+    grid = backend_make_grid(ra, dec, min(size_deg, LIVE_MAX_DEG))
     try:
-        loaded = asyncio.run(backend_load_frames(grid, det))
+        loaded = asyncio.run(_load_capped(grid, det))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         try:
-            loaded = loop.run_until_complete(backend_load_frames(grid, det))
+            loaded = loop.run_until_complete(_load_capped(grid, det))
         finally:
             loop.close()
     except Exception as e:

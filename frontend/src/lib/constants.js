@@ -139,13 +139,34 @@ export function offsetOf(c, t) {
 }
 
 export function parseCoords(q, midEpoch) {
-  const m = q.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
-  if (m.length === 2 && m.every(isFinite) && Math.abs(m[1]) <= 90) {
+  let s = q.trim();
+  // Check for sexagesimal like 19h 43m 40.6s -46d 39m 15s or RA 19h 43m 40.6s Dec -46° 39' 15"
+  const sexaRegex = /^(?:RA\s*:?\s*)?(\d+)[h\s:]+(\d+)[m\s:]+([\d.]+)[s\s,]+(?:Dec\s*:?\s*)?([+-]?\d+)[d\s:°]+(\d+)[m\s:\x27]+([\d.]+)s?["\x27]?$/i;
+  const match = s.match(sexaRegex);
+  if (match) {
+    const h = +match[1], m = +match[2], sec = +match[3];
+    const dSign = match[4].startsWith("-") ? -1 : 1;
+    const d = Math.abs(+match[4]), dm = +match[5], dsec = +match[6];
+    const ra = ((h + m / 60 + sec / 3600) * 15 + 360) % 360;
+    const dec = dSign * (d + dm / 60 + dsec / 3600);
     return {
       key: "custom",
-      name: `${m[0].toFixed(3)}°, ${m[1] >= 0 ? "+" : ""}${m[1].toFixed(3)}°`,
-      ra: ((m[0] % 360) + 360) % 360,
-      dec: m[1],
+      name: `${ra.toFixed(3)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(3)}°`,
+      ra,
+      dec,
+      kind: "Coordinates (Sexagesimal)",
+      epoch: midEpoch,
+    };
+  }
+  // Check for decimal with or without RA/Dec prefix, e.g. "RA 295.919, Dec -46.654" or "295.919, -46.654"
+  s = s.replace(/RA\s*:?\s*/gi, "").replace(/Dec\s*:?\s*/gi, "");
+  const parts = s.replace(/[,;]/g, " ").trim().split(/\s+/).map(Number);
+  if (parts.length === 2 && parts.every(isFinite) && Math.abs(parts[1]) <= 90) {
+    return {
+      key: "custom",
+      name: `${parts[0].toFixed(3)}°, ${parts[1] >= 0 ? "+" : ""}${parts[1].toFixed(3)}°`,
+      ra: ((parts[0] % 360) + 360) % 360,
+      dec: parts[1],
       kind: "Coordinates",
       epoch: midEpoch,
     };

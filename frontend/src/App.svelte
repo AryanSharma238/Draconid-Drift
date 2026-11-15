@@ -389,7 +389,7 @@
     ).catch(() => null);
 
     startProgressBar();
-    await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000);
+    await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2600);
     req.arrived = true;
     if (skyCanvas) overlay.style.opacity = "1";
     view = "waiting";
@@ -424,6 +424,15 @@
     }
     if (!res || res.nonce !== req.nonce) return;
 
+    // Replace "Selected area" title with the actual star/object name if an identified star sits in the area
+    if (res.name === "Selected area" || res.name === "Selected patch") {
+      if (res.movers && res.movers.length > 0 && res.movers[0].name && !res.movers[0].name.startsWith("Selected")) {
+        res.name = res.movers[0].name;
+      } else if (res.objects && res.objects.length > 0 && res.objects[0].name && !res.objects[0].name.startsWith("Unnamed")) {
+        res.name = res.objects[0].name;
+      }
+    }
+
     stopProgressBar(true);
     targetDotOn = false;
     view = "settling";
@@ -447,7 +456,7 @@
               j.ph,
               WISETONE
             );
-        return await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 300))]);
+        return await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 1200))]);
       } catch (e) {
         return null;
       }

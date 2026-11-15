@@ -28,7 +28,7 @@ function hpxContinuous(ra, dec, nside) {
 
 const tileCache = new Map();
 let active = 0; const waiting = [];
-const slot = () => new Promise(r => { if (active < 6) { active++; r(); } else waiting.push(r); });
+const slot = () => new Promise(r => { if (active < 16) { active++; r(); } else waiting.push(r); });
 const free = () => { const n = waiting.shift(); if (n) n(); else active--; };
 function loadTile(base, order, idx, slice = null, fmt = "jpg") {
   const key = base + order + "/" + idx + "_" + slice;
@@ -43,7 +43,7 @@ function loadTile(base, order, idx, slice = null, fmt = "jpg") {
       res({ w: c.width, h: c.height, d: g.getImageData(0, 0, c.width, c.height).data });
     };
     let tries = 0;
-    im.onerror = () => { if (++tries < 4) setTimeout(() => { im.src = im.src.split('?')[0] + '?r=' + tries; }, 500 * tries); else { tileCache.delete(key); res(null); } };
+    im.onerror = () => { if (++tries < 3) setTimeout(() => { im.src = im.src.split('?')[0] + '?r=' + tries; }, 200 * tries); else { tileCache.delete(key); res(null); } };
     im.src = `${base}/Norder${order}/Dir${dir}/Npix${idx}${slice ? "_" + slice : ""}.${fmt}`;
   }));
   tileCache.set(key, p);
@@ -131,7 +131,6 @@ export async function renderCutout(survey, ra, dec, fovDeg, w, h, tweak = {}, op
     }
     od[o + 3] = 255;
   }
-  if ((j & 7) === 7 && performance.now() - t0 > 6) { await new Promise(r => setTimeout(r, 0)); t0 = performance.now(); }
   }
   g.putImageData(out, 0, 0);
   return cv;

@@ -1,0 +1,18 @@
+{
+  "_source": "SIMBAD via scripts/targets.py CATALOG (Gaia EDR3 for barnard/epsindb; SIMBAD-listed PM for wise0855). pmra includes cos(dec). mas/yr.",
+  "wise0855": {
+    "pmra_masyr": -8123.7,
+    "pmdec_masyr": 673.2,
+    "name": "WISE 0855-0714"
+  },
+  "barnard": {
+    "pmra_masyr": -801.551,
+    "pmdec_masyr": 10362.394,
+    "name": "Barnard's Star"
+  },
+  "epsindb": {
+    "pmra_masyr": 3981.977,
+    "pmdec_masyr": -2466.832,
+    "name": "eps Ind B"
+  }
+}

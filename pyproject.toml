@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+markers = ["network: hits IRSA/Gaia; skipped by default"]
+addopts = "-m 'not network'"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110

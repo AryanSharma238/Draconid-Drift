@@ -1,8 +1,7 @@
 // The sky: one Aladin Lite instance driven by hand, so every animation frame is under our control.
 import A from "https://cdn.jsdelivr.net/npm/aladin-lite@3.8.2/dist/aladin.js";
 
-export const MAP_URL = "https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube";   // SPHEREx DR1 all-sky, 102 wavelength slices
-export const MAP_SLICE = 63;   // 3.38 um, the AllWISE W1 band
+export const MAP_URL = "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color";   // sharp 2MASS colour map for browsing and the flight
 const R = Math.PI / 180;
 
 export const unit = (ra, dec) => [Math.cos(dec * R) * Math.cos(ra * R), Math.cos(dec * R) * Math.sin(ra * R), Math.sin(dec * R)];
@@ -31,7 +30,6 @@ export class Sky {
     this.el.querySelectorAll(".aladin-logo-container").forEach(n => n.remove());
     for (let i = 0; i < 200 && !this.a.getBaseImageLayer(); i++) await new Promise(r => setTimeout(r, 25));
     const h = this.a.getBaseImageLayer();
-    try { h.setSliceNumber(MAP_SLICE); h.setCuts(18, 255); } catch (e) { /* older Aladin: first slice, default cuts */ }
     try { this.a.setCooGrid({ color: "rgb(255,255,255)", opacity: 0.06, labelSize: 0, thickness: 1, enabled: false }); } catch (e) {}
     return this;
   }
@@ -41,7 +39,7 @@ export class Sky {
   fov() { return this.a.getFoV()[0]; }
   set(ra, dec, fov) { this.a.setFoV(fov); this.a.gotoRaDec(ra, dec); }
   /** Zodiacal glow makes the infrared sky bright when zoomed in: black level = sky level on screen (raw 0-255 tile values). */
-  setBlack(v) { try { this.a.getBaseImageLayer().setCuts(Math.min(200, Math.max(18, v)), 255); } catch (e) {} }
+  setBlack(v) {}
   grid(on) { try { on ? this.a.showCooGrid() : this.a.hideCooGrid(); } catch (e) {} }
   pix2world(x, y) { try { const r = this.a.pix2world(x, y); return r && isFinite(r[0]) ? [r[0], r[1]] : null; } catch (e) { return null; } }
   /** FoV (deg across the viewport width) that shows the whole AIT ellipse inside the window, below the top bar. */

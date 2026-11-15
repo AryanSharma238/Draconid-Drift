@@ -53,7 +53,7 @@ if req and req.get("nonce") != S.seen:
         if key in PRESETS:
             spec = pipeline.spec_from_target(PRESETS[key])
         else:
-            fov = min(max(float(req.get("fov") or 180.0), 60.0), 1800.0)
+            fov = min(max(float(req.get("fov") or 180.0), 60.0), 5400.0)
             if req.get("name") in (None, "", "Selected area", "Selected patch"):
                 from astropy.coordinates import SkyCoord, get_constellation
                 import astropy.units as u

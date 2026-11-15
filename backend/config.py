@@ -56,7 +56,7 @@ ZSCALE_MAX_SAMPLES = 100_000
 # --- request limits ---
 FOV_CHOICES_DEG = (0.05, 0.1, 0.25, 0.5)
 DEFAULT_FOV_DEG = 0.1
-MAX_FOV_DEG = 0.5
+MAX_FOV_DEG = 1.5
 COORD_SNAP_DEG = 0.001  # snap request centre for cache sharing (3.6″ < 1 px)
 
 # --- fetching ---

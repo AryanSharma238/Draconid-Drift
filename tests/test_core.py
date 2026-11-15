@@ -18,7 +18,7 @@ def test_wise_epoch_correction_moves_about_130_arcsec_west():
 
 
 def test_cleaning_removes_zodi_and_reprojects_north_up():
-    raw, ra, dec = demo.synthetic_raw(WISE, detector="SPHEREx-D6")
+    raw, ra, dec = demo.synthetic_raw(WISE, detector="SPHEREx-D6", fov_arcsec=WISE.fov_arcsec)
     cube = clean.build_cube(raw, ra, dec, WISE.fov_arcsec, "SPHEREx-D6", "SYNTHETIC")
     assert cube.cube.shape[0] == len(raw)
     med = np.nanmedian(cube.cube)

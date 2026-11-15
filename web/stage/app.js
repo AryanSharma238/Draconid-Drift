@@ -21,6 +21,8 @@ const smooth = x => x * x * (3 - 2 * x);
 const clamp01 = x => Math.max(0, Math.min(1, x));
 // slow to leave, quickens toward the end, then settles
 const flightEase = x => smooth(Math.pow(clamp01(x), 1.35));
+// zoom in log-scale with a long soft landing, so the map tiles keep up and it stops exactly on the field
+const zoomEase = x => 1 - Math.pow(1 - x, 3);
 const tween = (dur, fn) => new Promise(res => {
   const t0 = now();
   const step = () => { const t = clamp01((now() - t0) / dur); fn(t); t < 1 ? later(step) : res(); };
@@ -63,16 +65,16 @@ const smoothCv = document.createElement("canvas"); smoothCv.id = "smooth"; inner
 let smoothId = 0;
 async function refreshSmooth() {
   const my = ++smoothId; smoothCv.classList.remove("on");
-  if (view !== "home" || sky.fov() > 8) return;
+  if (view !== "home" || sky.fov() > 2) return;
   const [r, d] = sky.center(), w = Math.round(sky.W / 1.5), h = Math.round(sky.H / 1.5);
   const black = (sky.black ?? 18) / 255;
   try {
-    const c = await renderCutout(SURVEYS.spherex(63), r, d, sky.fov(), w, h, { mono: true, black, gain: 1, gamma: 1 });
+    const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, {});
     if (my !== smoothId || view !== "home") return;
     smoothCv.width = w; smoothCv.height = h; smoothCv.getContext("2d").drawImage(c, 0, 0); smoothCv.classList.add("on");
   } catch (e) {}
 }
-async function autoCuts() {
+async function autoCuts() { return;
   if (sky.fov() > 60) return sky.setBlack(18);
   const [r, d] = sky.center();
   try {
@@ -85,12 +87,17 @@ async function autoCuts() {
 }
 let spinning = false;
 function homeView() { return [0, 0, sky.homeFov()]; }
+function fitBlend() {                              // cover only the area outside the all-sky ellipse
+  const w = sky.W * 360 / sky.homeFov() / 2 + 1, h = w / 2;
+  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent 99.6%, #000 100%)`;
+  const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
+}
 async function boot() {
   await sky.init();
-  sky.set(0, 0, sky.homeFov());
+  sky.set(0, 0, sky.homeFov()); fitBlend();
   sky.startSpin(2.2); spinning = true;
   bindSky();
-  window.addEventListener("resize", () => { if (view === "home") sky.a.setFoV(sky.homeFov()); layoutField(); });
+  window.addEventListener("resize", () => { fitBlend(); if (view === "home") sky.a.setFoV(sky.homeFov()); layoutField(); });
   window.__sky = sky; window.__ready = true;
 }
 
@@ -114,7 +121,15 @@ function bindSky() {
     tipEl.style.transform = `translate(${e.clientX + 18}px,${e.clientY + 20}px)`; tipEl.classList.add("on");
   });
   let wt = 0;
-  clip.addEventListener("wheel", () => { if (!homeOk()) return; wake(); clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth(); app.classList.toggle("zoomed", sky.fov() < 90); }, 450); }, { capture: true, passive: true });
+  clip.addEventListener("wheel", e => {
+    if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); wake();
+    const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+    const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
+    const r = rect(), before = sky.pix2world(e.clientX - r.left, e.clientY - r.top);
+    sky.a.setFoV(f);
+    const after = sky.pix2world(e.clientX - r.left, e.clientY - r.top), c = sky.center();
+    if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
+ clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth(); app.classList.toggle("zoomed", sky.fov() < 90); }, 300); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
   // right button: draw an area. Swallowed before Aladin sees it (Aladin uses right-drag for contrast).
@@ -146,7 +161,7 @@ function bindSky() {
     if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
     // the field is the square that covers the whole highlighted area, centred on it
     const side = Math.max(sepDeg(L, R), sepDeg(T, B)) * 3600;
-    if (side > 1800) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 0.5°.`); }
+    if (side > 5400) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`); }
     go({ key: "custom", name: "Selected area", ra: c[0], dec: c[1], pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
   }, true);
 }
@@ -157,10 +172,10 @@ const panelA = () => { const r = $("pSpx").getBoundingClientRect(); return r.wid
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
-async function flyTo(ra, dec, fov, dur, { zoomLag = 0.12, panEnd = 0.8 } = {}) {
+async function flyTo(ra, dec, fov, dur, { zoomLag = 0, panEnd = 1 } = {}) {
   const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec), f0 = Math.log(sky.fov()), f1 = Math.log(fov);
   await tween(dur, t => {
-    const pc = flightEase(t / panEnd), pz = flightEase((t - zoomLag) / (1 - zoomLag));
+    const pc = flightEase(t / panEnd), pz = zoomEase(clamp01((t - zoomLag) / (1 - zoomLag)));
     const [r, d] = radec(slerp(u0, u1, pc));
     sky.set(r, d, Math.exp(f0 + (f1 - f0) * pz));
     if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.86) / 0.14)));
@@ -188,7 +203,7 @@ async function go(item) {
   const my = req.nonce, det = item.detector || "SPHEREx-D4";
   // 1) the SPHEREx all-sky map of the whole window, smoothed, to take over from Aladin's pixels as the zoom lands
   const cw = 1152, ch = Math.round(cw * sky.H / sky.W);
-  renderCutout(SURVEYS.spherex(det === "SPHEREx-D6" || det === "SPHEREx-D5" ? 90 : 63), req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), cw, ch, MAPTONE).then(c => {
+  renderCutout(SURVEYS.tmass, req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), cw, ch, {}).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
   }).catch(() => {});
@@ -197,7 +212,7 @@ async function go(item) {
   renderCutout(det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, req.pos[0], req.pos[1], req.fieldDeg, pw, ph, WISETONE).then(c => {
     if (req && req.nonce === my) wiseCanvas = c;
   }).catch(() => {});
-  await flyTo(req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), 4600);
+  await flyTo(req.pos[0], req.pos[1], req.fieldDeg * sky.W / SF(), 6500);
   req.arrived = true; autoCuts();
   setView("waiting"); tryReveal();
 }
@@ -300,8 +315,25 @@ function paintWise(res) {
   if (hasPM(res)) {                                  // where the target sat when WISE looked (about 2010.4)
     const p = propagate({ ra: res.ra, dec: res.dec, pmra: res.pmra, pmdec: res.pmdec, epoch: args.mid }, 2010.4), s = res.field_deg * 3600;
     const dx = (p[0] - res.ra_c) * Math.cos(res.dec_c * Math.PI / 180) * 3600, dy = (p[1] - res.dec_c) * 3600;
-    ring(g, cv.width * (0.5 - dx / s), cv.height / 2 - cv.width * dy / s, cv.width, 0.9);
+    g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, cv.width / 300);
+    g.beginPath(); g.arc(cv.width * (0.5 - dx / s), cv.height / 2 - cv.width * dy / s, cv.width * 0.045, 0, Math.PI * 2); g.stroke(); g.restore();
   }
+}
+function ghost(g, x0, y0, x1, y1, size) {           // where it was in 2010 (grey) -> where it is now
+  g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, size / 300);
+  g.beginPath(); g.arc(x0, y0, size * 0.045, 0, Math.PI * 2); g.stroke();
+  const d = Math.hypot(x1 - x0, y1 - y0), r0 = size * 0.045, r1 = size * 0.055;
+  if (d > r0 + r1) {
+    const ux = (x1 - x0) / d, uy = (y1 - y0) / d;
+    g.setLineDash([size / 90, size / 110]); g.beginPath();
+    g.moveTo(x0 + ux * r0, y0 + uy * r0); g.lineTo(x1 - ux * r1, y1 - uy * r1); g.stroke();
+  }
+  g.restore();
+}
+function wisePos(res, w) {                          // 2010.4 position in panel pixels (panel width w, square field centred)
+  const p = propagate({ ra: res.ra, dec: res.dec, pmra: res.pmra, pmdec: res.pmdec, epoch: args.mid }, 2010.4), s = res.field_deg * 3600;
+  const dx = (p[0] - res.ra_c) * Math.cos(res.dec_c * Math.PI / 180) * 3600, dy = (p[1] - res.dec_c) * 3600;
+  return [w * (0.5 - dx / s), -w * dy / s];        // y relative to the field centre
 }
 function ring(g, x, y, size, a = 0.85) {
   if (x < -size * .1 || x > size * 1.1) return;
@@ -323,7 +355,9 @@ function preparePlayer(res) {
   const bg = backdrop.getContext("2d"); bg.fillStyle = "#13161a"; bg.fillRect(0, 0, cv.width, cv.height);
   if (skyCanvas) {
     const sw = skyCanvas.width * SF() / sky.W * (res.field_deg / req.fieldDeg), sh = sw * cv.height / cv.width;
+    bg.filter = "grayscale(1) blur(1.5px) brightness(.7)";
     bg.drawImage(skyCanvas, (skyCanvas.width - sw) / 2, (skyCanvas.height - sh) / 2, sw, sh, 0, 0, cv.width, cv.height);
+    bg.filter = "none";
   }
   tmp = document.createElement("canvas"); tmp.width = cv.width; tmp.height = cv.width;
   drawSpx();
@@ -354,6 +388,9 @@ function drawSpx() {
   g.drawImage(backdrop, 0, 0); g.drawImage(tmp, 0, y0);
   if (hasPM(P)) {
     const a = P.marks[i], b = P.marks[j];
+    const cur = a && b ? [(a[0] + (b[0] - a[0]) * e) * cw, y0 + (a[1] + (b[1] - a[1]) * e) * cw] : a ? [a[0] * cw, y0 + a[1] * cw] : null;
+    const w0 = wisePos(P, cw);
+    if (cur) ghost(g, w0[0], ch / 2 + w0[1], cur[0], cur[1], cw);
     if (a && b) ring(g, (a[0] + (b[0] - a[0]) * e) * cw, y0 + (a[1] + (b[1] - a[1]) * e) * cw, cw, 0.9);
     else if (a) ring(g, a[0] * cw, y0 + a[1] * cw, cw, 0.9);
   }

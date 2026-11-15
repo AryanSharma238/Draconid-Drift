@@ -16,7 +16,7 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 #sky{position:absolute;inset:0}
 #sky .aladin-logo-container,.aladin-logo-container{display:none!important}
 /* Aladin paints its outside-the-map colour as (26,26,26). Multiplying by (186,216,255) lands exactly on the page colour. */
-#blend{position:absolute;inset:0;background:rgb(186,216,255);mix-blend-mode:multiply;pointer-events:none;transition:opacity .5s}
+#blend{position:absolute;inset:0;background:#13161A;pointer-events:none;transition:opacity .5s}
 #app:not([data-view=home]) #blend{opacity:0}
 
 /* ---------- top bar ---------- */
@@ -111,7 +111,7 @@ nav{display:flex;align-items:center;gap:6px}
 #info{aspect-ratio:auto;max-height:none}
 
 /* area selection + first-move hint */
-#sel{position:absolute;left:0;top:0;width:0;height:0;border:1.5px solid #c58d96;background:rgba(122,74,81,.22);border-radius:6px;opacity:0;pointer-events:none;z-index:10;transition:opacity .25s}
+#sel{position:absolute;left:0;top:0;width:0;height:0;border:1.5px solid #c58d96;background:rgba(122,74,81,.22);border-radius:0;opacity:0;pointer-events:none;z-index:10;transition:opacity .25s}
 #sel.on{opacity:1}
 #app:not([data-view=home]):not([data-view=flying]) #sel{opacity:0}
 #app[data-view=flying] #sel{transition:opacity .9s;opacity:0}

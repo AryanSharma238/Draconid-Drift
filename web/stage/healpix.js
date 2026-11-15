@@ -122,6 +122,7 @@ export async function renderCutout(survey, ra, dec, fovDeg, w, h, tweak = {}, op
 }
 export const SURVEYS = {
   wise: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1", order: 8 },
+  tmass: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color", order: 9 },
   w1: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W1", order: 8 },
   w2: { url: "https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/W2", order: 8 },
   spherex: slice => ({ url: "https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube", order: 5, slice, fmt: "png" }),

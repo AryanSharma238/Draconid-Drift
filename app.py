@@ -14,7 +14,7 @@ from drift.targets import PRESETS, target_position
 warnings.simplefilter("ignore", AstropyWarning)
 HERE = os.path.dirname(__file__)
 
-st.set_page_config(page_title="Draconid Drift", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Draconid Drift", page_icon="web/stage/icons/icon-192.png", layout="wide", initial_sidebar_state="collapsed")
 
 # The stage is the whole page: hide Streamlit's own chrome and let the component fill the window.
 st.markdown("""<style>
@@ -171,7 +171,7 @@ if req and req.get("nonce") != S.seen:
         if key in PRESETS:
             spec = pipeline.spec_from_target(PRESETS[key])
         else:
-            fov = min(max(float(req.get("fov") or 180.0), 60.0), 5400.0)
+            fov = min(max(float(req.get("fov") or 180.0), 60.0), 7200.0)
             name_job = None
             req_name = req.get("name")
             if req_name in (None, "", "Selected area", "Selected patch"):

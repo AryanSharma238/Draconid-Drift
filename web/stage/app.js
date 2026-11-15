@@ -232,13 +232,14 @@ async function go(item) {
   req.fieldDeg = fieldDeg(Math.max(item.fov || 180, 2.4 * shift + 60));
   emit(Object.assign({ type: "go" }, req));
   setView("flying"); sky.haltSpin(); spinning = false; smoothId++; smoothCv.classList.remove("on");
-  wiseCanvas = null; skyCanvas = null; makeOverlay();
+  wiseCanvas = null; skyCanvas = null; makeOverlay(); app.classList.remove("smoothready");
   const my = req.nonce, det = item.detector || "SPHEREx-D4";
   // 1) the SPHEREx all-sky map of the whole window, smoothed, to take over from Aladin's pixels as the zoom lands
-  const cw = 1152, ch = Math.round(cw * sky.H / sky.W);
+  const cw = 768, ch = Math.round(cw * sky.H / sky.W);
   renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, {}).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
+    app.classList.add("smoothready"); if (req.arrived) overlay.style.opacity = "1";
   }).catch(() => {});
   // 2) the archive image at the same wavelength, same window, for the left panel
   const f = $("pSpx").getBoundingClientRect(), pw = Math.min(560, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
@@ -246,7 +247,7 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 6500);
-  req.arrived = true; autoCuts();
+  req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
 
@@ -520,7 +521,7 @@ const esc = s => s.replace(/'/g, "''");
 const FAMOUS = [
   ["Sirius", 101.287155, -16.716116, -546.01, -1223.07, "Brightest star"], ["Polaris", 37.954561, 89.264109, 44.48, -11.85, "North Star"],
   ["Alpha Centauri", 219.902066, -60.833975, -3679.25, 473.67, "Nearest star system"], ["Proxima Centauri", 217.428953, -62.679484, -3781.74, 769.47, "Nearest star"],
-  ["TON 618", 187.2391, 31.4723, 0, 0, "Quasar"], ["Betelgeuse", 88.792939, 7.407064, 27.54, 11.30, "Red supergiant"],
+  ["TON 618", 187.104025, 31.477119, 0, 0, "Quasar"], ["Betelgeuse", 88.792939, 7.407064, 27.54, 11.30, "Red supergiant"],
   ["Vega", 279.234735, 38.783689, 200.94, 286.23, "Star"], ["Rigel", 78.634467, -8.201638, 1.31, 0.50, "Blue supergiant"],
   ["Arcturus", 213.915300, 19.182409, -1093.39, -2000.06, "Red giant"], ["Andromeda Galaxy", 10.684708, 41.268750, 0, 0, "Galaxy"],
   ["Orion Nebula", 83.822083, -5.391111, 0, 0, "Nebula"], ["Sagittarius A*", 266.416837, -29.007810, 0, 0, "Galactic centre"],

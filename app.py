@@ -67,17 +67,19 @@ if req and req.get("nonce") != S.seen:
         S.result = None
     elif req.get("type") == "go":
         key = req.get("key")
+        name_job = None
         if key in PRESETS:
             spec = pipeline.spec_from_target(PRESETS[key])
         else:
             fov = min(max(float(req.get("fov") or 180.0), 60.0), 5400.0)
+            name_job = None
             if req.get("name") in (None, "", "Selected area", "Selected patch"):
-                from astropy.coordinates import SkyCoord, get_constellation
-                import astropy.units as u
-                c = SkyCoord(float(req["ra"]) * u.deg, float(req["dec"]) * u.deg)
-                near = [t.name for t in PRESETS.values()
-                        if c.separation(SkyCoord(*target_position(t, MID_EPOCH), unit="deg")).arcmin < 30]
-                req["name"] = f"Near {near[0]}" if near else f"Patch in {get_constellation(c)}"
+                # name the patch by what is actually in it (SIMBAD), looked up while the frames are fetched
+                from concurrent.futures import ThreadPoolExecutor
+                from drift.naming import name_field
+                name_job = ThreadPoolExecutor(1).submit(name_field, round(float(req["ra"]), 4), round(float(req["dec"]), 4),
+                                                        round(fov / 3600.0, 4))
+                req["name"] = "Selected area"
             spec = pipeline.Spec(name=str(req.get("name") or "Selected area")[:60], ra=float(req["ra"]), dec=float(req["dec"]),
                                  pmra=float(req.get("pmra") or 0.0), pmdec=float(req.get("pmdec") or 0.0),
                                  epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D4")
@@ -85,6 +87,11 @@ if req and req.get("nonce") != S.seen:
         try:
             payload = cached_stage(spec)
             payload = dict(payload, nonce=req["nonce"])
+            if key not in PRESETS and name_job is not None:
+                try:
+                    payload["name"] = name_job.result(timeout=15)
+                except Exception:
+                    pass
             S.result = payload
         except pipeline.DataFetchError as e:
             S.result, S.error = None, f"No SPHEREx images here yet ({e}). Try another spot."

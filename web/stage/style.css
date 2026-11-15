@@ -141,3 +141,8 @@ nav{display:flex;align-items:center;gap:6px}
 
 #blend{transition:none}
 #bar{opacity:1!important}
+
+/* while waiting for data: never show Aladin's half-loaded diamond tiles; the smooth picture fades in when ready */
+#sky{transition:opacity .5s}
+#app[data-view=waiting] #sky,#app[data-view=settling] #sky{opacity:0}
+#fw{transition:opacity .5s}

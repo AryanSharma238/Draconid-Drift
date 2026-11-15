@@ -248,12 +248,39 @@ async def api_health() -> JSONResponse:
     return JSONResponse({"ok": True, "data_version": index.data_version(), "index_rows": len(idx.rows)})
 
 
+async def load_frames_capped(grid, det: int, max_frames: int):
+    """Like load_frames, but reads at most max_frames exposures, spread evenly in time (deep fields have hundreds)."""
+    import contextlib
+
+    import numpy as np
+
+    from backend import index
+    from backend.sequence import Loaded, fetch_interleaved, group_refs_by_pass
+
+    refs = sorted(await index.find_images(grid.ra, grid.dec, det), key=lambda r: r.t_mjd)
+    if len(refs) > max_frames:
+        keep = np.unique(np.linspace(0, len(refs) - 1, max_frames).round().astype(int))
+        refs = [refs[i] for i in keep]
+    pass_of = group_refs_by_pass(refs)
+    got, failed = {}, []
+    if refs:
+        async with contextlib.aclosing(fetch_interleaved(refs, grid, pass_of)) as it:
+            async for i, frame, err in it:
+                if err is not None or frame is None:
+                    failed.append((refs[i].obs_id, err or "no frame"))
+                else:
+                    frame.pass_idx = pass_of[i]
+                    got[i] = frame
+    return Loaded(refs, [got[i] for i in sorted(got)], failed)
+
+
 @app.get("/api/cube")
 async def api_cube(
     ra: float,
     dec: float,
     size: float = config.DEFAULT_FOV_DEG,
     det: int = config.DETECTORS[-1],
+    max_frames: int = 0,
 ) -> Response:
     """Fast binary float32 cube endpoint for Draconid Drift UI over SSH tunnel or local backend."""
     import io
@@ -271,7 +298,7 @@ async def api_cube(
     ra = ra % 360.0
     grid = make_grid(ra, dec, size)
     try:
-        loaded = await load_frames(grid, det)
+        loaded = await (load_frames_capped(grid, det, max_frames) if max_frames > 0 else load_frames(grid, det))
     except FileNotFoundError as e:
         return _err(503, f"footprint index missing ({e.filename})")
     refs = loaded.refs

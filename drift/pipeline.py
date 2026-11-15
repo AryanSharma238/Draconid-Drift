@@ -64,13 +64,24 @@ class Spec:
                       self.epoch, self.fov_arcsec, self.detector, "")
 
 
+WISE_EPOCH = 2010.5
+
+
+def framed(spec: Spec) -> Spec:
+    """Frame a moving target so its AllWISE (2010) position is the centre and its SPHEREx position is
+    inside too: the field grows to 2.4x the distance travelled since 2010 (plus a margin) when needed."""
+    import dataclasses
+    shift = np.hypot(spec.pmra, spec.pmdec) / 1000.0 * (MID_EPOCH - WISE_EPOCH)        # arcsec
+    return dataclasses.replace(spec, fov_arcsec=float(max(spec.fov_arcsec, 2.4 * shift + 60.0)))
+
+
 def spec_from_target(t: Target):
-    return Spec(t.name, t.ra, t.dec, t.pmra, t.pmdec, t.epoch, t.fov_arcsec, t.detector, t.key)
+    return framed(Spec(t.name, t.ra, t.dec, t.pmra, t.pmdec, t.epoch, t.fov_arcsec, t.detector, t.key))
 
 
 def field_center(spec: Spec):
-    """Field centre = target position moved to the middle of the SPHEREx mission."""
-    return propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
+    """Field centre = the target where AllWISE saw it (2010.5), so both datasets frame it the same way."""
+    return propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, WISE_EPOCH)
 
 
 def _det_int(detector: str) -> int:
@@ -103,12 +114,13 @@ def load_cube(path):
 
 # --------------------------------------------------- EC2 + S3 fetchers ------
 _EC2_CLIENT: httpx.Client | None = None
+EC2_MAX_FRAMES = 120   # the server sends an even-in-time subset; more frames add transfer time, not detail
 
 
 def _get_ec2_client() -> httpx.Client:
     global _EC2_CLIENT
     if _EC2_CLIENT is None:
-        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(12.0, connect=0.4))
+        _EC2_CLIENT = httpx.Client(timeout=httpx.Timeout(30.0, connect=0.6))
     return _EC2_CLIENT
 
 
@@ -118,7 +130,7 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
         client = _get_ec2_client()
         r = client.get(
             f"{EC2_BACKEND_URL}/api/cube",
-            params={"ra": ra, "dec": dec, "size": size_deg, "det": det},
+            params={"ra": ra, "dec": dec, "size": size_deg, "det": det, "max_frames": EC2_MAX_FRAMES},
         )
         if r.status_code != 200:
             return None

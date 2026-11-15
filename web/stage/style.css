@@ -25,7 +25,7 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 nav{display:flex;align-items:center;gap:6px}
 #aboutBtn{font-size:15px;padding:10px 14px;color:rgba(255,255,255,.72);transition:color .2s}
 #aboutBtn:hover{color:#fff}
-#app[data-view=flying] #bar,#app[data-view=settling] #bar{opacity:0;pointer-events:none}
+
 
 /* ---------- search ---------- */
 #search{position:relative;display:flex;align-items:center}
@@ -130,7 +130,7 @@ nav{display:flex;align-items:center;gap:6px}
 #spxCv{opacity:0;transition:opacity .5s}#spxCv.on{opacity:1}
 #wiseCv{opacity:1}
 
-#app.zoomed #blend{opacity:0}
+
 
 #brand,.lab h2,.big,.blk h3{font-stretch:125%}
 .lab h2{font-weight:800;letter-spacing:-.01em}
@@ -138,3 +138,6 @@ nav{display:flex;align-items:center;gap:6px}
 #brand{font-weight:700;font-size:18px}
 #smooth{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .35s;z-index:1}#smooth.on{opacity:1}
 #sky,#sky *,#sky-clip{cursor:default!important}#sky .aladin-reticleCanvas,#sky .aladin-reticle{display:none!important}
+
+#blend{transition:none}
+#bar{opacity:1!important}

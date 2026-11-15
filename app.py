@@ -54,7 +54,8 @@ def cached_stage(spec):
             return json.load(fh)
     res = pipeline.run(spec, mode="target", n_null=120, build=False, max_frames=120)
     ra_now, dec_now = pipeline.propagate(spec.ra, spec.dec, spec.pmra, spec.pmdec, spec.epoch, MID_EPOCH)
-    return build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, spec.epoch)
+    return build_stage(res, spec.name, float(ra_now), float(dec_now), spec.pmra, spec.pmdec, MID_EPOCH,
+                       ra0=spec.ra, dec0=spec.dec, epoch0=spec.epoch)
 
 
 req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, key="stage", default=None)
@@ -80,6 +81,7 @@ if req and req.get("nonce") != S.seen:
             spec = pipeline.Spec(name=str(req.get("name") or "Selected area")[:60], ra=float(req["ra"]), dec=float(req["dec"]),
                                  pmra=float(req.get("pmra") or 0.0), pmdec=float(req.get("pmdec") or 0.0),
                                  epoch=float(req.get("epoch") or 2000.0), fov_arcsec=fov, detector="SPHEREx-D4")
+            spec = pipeline.framed(spec)
         try:
             payload = cached_stage(spec)
             payload = dict(payload, nonce=req["nonce"])

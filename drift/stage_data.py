@@ -6,7 +6,9 @@ from astropy.time import Time
 
 from . import SPHEREX_PIXEL_ARCSEC
 from .clean import burst_groups
+from .movers import find_movers
 from .render import flip_y, stretch_params, to_dark_jpeg_b64
+from .targets import mjd_to_year
 
 # The archival comparison image is taken at the SPHEREx wavelength: AllWISE W1 (3.4 um) for D4, W2 (4.6 um) for D5/D6.
 COMPARE = {
@@ -76,7 +78,9 @@ def smoothed_frames(cube, k=SMOOTH_K):
     return out
 
 
-def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0):
+def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None, dec0=None, epoch0=None):
+    """ra/dec: position shown in the info panel. ra0/dec0/epoch0: catalogue position for the mover search."""
+    ra0, dec0, epoch0 = (ra if ra0 is None else ra0), (dec if dec0 is None else dec0), (epoch if epoch0 is None else epoch0)
     cube = res["cube"]
     n, ny, nx = cube.cube.shape
     sm = smoothed_frames(cube)
@@ -88,16 +92,22 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0):
         order = [i for i in np.argsort(cube.mjd) if near[i]]
     else:
         order = list(np.argsort(cube.mjd))
-    frames, marks, dates, wl = [], [], [], []
+    frames, marks, dates, wl, years = [], [], [], [], []
     for i in order:
         frames.append(to_dark_jpeg_b64(sm[i], p))
         m = res["mark_fn"](cube.mjd[i]) if res.get("mark_fn") else None
         marks.append(None if m is None else [round((m[0] + 0.5) / nx, 4), round((flip_y(m[1], ny) + 0.5) / ny, 4)])
         dates.append(Time(float(cube.mjd[i]), format="mjd").iso[:10])
+        years.append(round(float(np.asarray(mjd_to_year(cube.mjd[i]))), 4))
         wl.append(None if not np.isfinite(cube.wl[i]) else round(float(cube.wl[i]), 2))
     ra_c, dec_c = (float(v) for v in cube.wcs.wcs.crval)
+    try:
+        movers = find_movers(cube, dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0)))
+    except Exception:
+        movers = []
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
                 ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
-                nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl,
+                nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
+                movers=movers,
                 detector=cube.detector, compare=cmp,
                 verdict=verdict_summary(res["verdict"]), source=cube.source)

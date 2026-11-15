@@ -39,7 +39,7 @@ const MAPTONE = { mono: true, black: 0.10, gain: 1.25, gamma: 1.0 }, WISETONE = 
 const setView = v => { view = v; app.dataset.view = v; };
 
 /* ---------------------------------------------------------------- helpers */
-const MAS = 3.6e6, PX = 6.15;
+const MAS = 3.6e6, PX = 6.15, WISE_EPOCH = 2010.5;
 function propagate(it, year) {
   const dt = year - (it.epoch ?? 2000);
   const dec1 = it.dec + (it.pmdec || 0) * dt / MAS;
@@ -88,7 +88,7 @@ async function autoCuts() { return;
 let spinning = false;
 function homeView() { return [0, 0, sky.homeFov()]; }
 function fitBlend() {                              // cover only the area outside the all-sky ellipse
-  const w = sky.W * 360 / sky.homeFov() / 2 + 1, h = w / 2;
+  const w = sky.W * 360 / sky.fov() / 2 + 1, h = w / 2;      // the all-sky ellipse at the current zoom
   const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent 99.6%, #000 100%)`;
   const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
 }
@@ -126,10 +126,10 @@ function bindSky() {
     const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
     const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
     const r = rect(), before = sky.pix2world(e.clientX - r.left, e.clientY - r.top);
-    sky.a.setFoV(f);
+    sky.a.setFoV(f); fitBlend();
     const after = sky.pix2world(e.clientX - r.left, e.clientY - r.top), c = sky.center();
     if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
- clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth(); app.classList.toggle("zoomed", sky.fov() < 90); }, 300); }, { capture: true, passive: false });
+ clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 300); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
   // right button: draw an area. Swallowed before Aladin sees it (Aladin uses right-drag for contrast).
@@ -173,16 +173,45 @@ const ENDFOV = () => req.fieldDeg * sky.W / (SF() * panelA());   // sky width so
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
-async function flyTo(ra, dec, fov, dur, { zoomLag = 0, panEnd = 1 } = {}) {
-  const c0 = sky.center(), dra = ((ra - c0[0] + 540) % 360) - 180, f0 = Math.log(sky.fov()), f1 = Math.log(fov);
+// Fly to a target and never lose it: (1) turn the globe until the target sits a little below-right of the
+// centre, zooming only as much as keeps it on screen; (2) zoom in while it glides diagonally to the centre,
+// landing exactly on the final view (no overshoot).
+const OFF = [0.13, -0.17];                           // where the target waits during the zoom, as a fraction of the view (x right, y up)
+function offsetOf(c, t) {                            // target relative to the view centre, degrees (x right = west, y up = north)
+  const cd = Math.cos(t[1] * Math.PI / 180); let dra = t[0] - c[0]; dra = ((dra + 540) % 360) - 180;
+  return [-dra * cd, t[1] - c[1]];
+}
+function centreFor(t, off) {                         // the view centre that puts the target at screen offset off (degrees)
+  const cd = Math.max(Math.cos(t[1] * Math.PI / 180), 1e-3);
+  return [((t[0] + off[0] / cd) % 360 + 360) % 360, Math.max(-89.9, Math.min(89.9, t[1] - off[1]))];
+}
+async function flyTo(ra, dec, fov, dur) {
+  const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
+  const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
+  const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
+  const fA = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
+  const kA = visible ? startFrac : OFF;
+  const tA = visible ? 0 : 0.38;                     // share of the time spent turning the globe
+  const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
   await tween(dur, t => {
-    const pz = zoomEase(clamp01((t - zoomLag) / (1 - zoomLag)));
-    // half a parabola: steady sideways motion, the drop grows toward the end
-    const px = smooth(clamp01(t / panEnd)), py = Math.pow(clamp01(t / panEnd), 1.7) * (1.7 - 0.7 * clamp01(t / panEnd)) ;
-    const r = c0[0] + dra * px, d = c0[1] + (dec - c0[1]) * Math.min(1, py);
-    sky.set(r, d, Math.exp(f0 + (f1 - f0) * pz));
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.86) / 0.14)));
+    if (t < tA) {                                    // phase 1: turn, zoom a little, target always inside the view
+      const p = smooth(t / tA), c = radec(slerp(u0, uA, p));
+      const d = Math.hypot(...offsetOf(c, T));
+      const f = Math.max(Math.exp(Math.log(f0) + (Math.log(fA) - Math.log(f0)) * p), d * 3.4);
+      sky.set(c[0], c[1], Math.min(f, Math.max(f0, fA)));
+    } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
+      const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
+      const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
+      const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
+      sky.set(c[0], c[1], f);
+    }
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.88) / 0.12)));
   });
+  sky.set(ra, dec, fov);
+}
+async function flyHome(ra, dec, fov, dur) {         // back out to the whole sky
+  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec), f0 = Math.log(sky.fov()), f1 = Math.log(fov);
+  await tween(dur, t => { const p = smooth(t), [r, d] = radec(slerp(u0, u1, p)); sky.set(r, d, Math.exp(f0 + (f1 - f0) * p)); });
   sky.set(ra, dec, fov);
 }
 
@@ -198,8 +227,9 @@ async function go(item) {
   if (busy) return; busy = true;
   closeSearch(true); closeAbout();
   req = Object.assign({}, item, { nonce: String(Date.now()) + Math.random().toString(36).slice(2, 6) });
-  req.pos = propagate(item, args.mid);
-  req.fieldDeg = fieldDeg(item.fov || 180);
+  const shift = Math.hypot(item.pmra || 0, item.pmdec || 0) / 1000 * (args.mid - WISE_EPOCH);   // arcsec moved since 2010
+  req.pos = propagate(item, WISE_EPOCH);                      // AllWISE position = centre of both panels
+  req.fieldDeg = fieldDeg(Math.max(item.fov || 180, 2.4 * shift + 60));
   emit(Object.assign({ type: "go" }, req));
   setView("flying"); sky.haltSpin(); spinning = false; smoothId++; smoothCv.classList.remove("on");
   wiseCanvas = null; skyCanvas = null; makeOverlay();
@@ -211,10 +241,10 @@ async function go(item) {
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
   }).catch(() => {});
   // 2) the archive image at the same wavelength, same window, for the left panel
-  const f = $("pSpx").getBoundingClientRect(), pw = Math.min(720, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
-  renderCutout(det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).then(c => {
-    if (req && req.nonce === my) wiseCanvas = c;
-  }).catch(() => {});
+  const f = $("pSpx").getBoundingClientRect(), pw = Math.min(560, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
+  req.wiseJob = { survey: det === "SPHEREx-D6" || det === "SPHEREx-D5" ? SURVEYS.w2 : SURVEYS.w1, pw, ph };
+  // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
+  req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 6500);
   req.arrived = true; autoCuts();
   setView("waiting"); tryReveal();
@@ -234,7 +264,12 @@ async function tryReveal() {
   setView("settling");
   fillPage(res);
   await loadFrames(res);
-  for (let i = 0; i < 50 && !wiseCanvas; i++) await new Promise(r => setTimeout(r, 60));
+  try {                                                     // same centre, same size, same orientation as the SPHEREx cube
+    const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
+      Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
+    const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
+    wiseCanvas = await Promise.race([job, new Promise(r => setTimeout(() => r(null), 20000))]);
+  } catch (e) { wiseCanvas = null; }
   const { W, H, S, k, A, dx, dy } = geom();
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
   setTimeout(() => app.classList.add("shown"), 300);
@@ -275,8 +310,8 @@ async function leave(fromError = false) {
   if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
   setView("flying");
   const c = sky.center();
-  await flyTo(c[0], 0, sky.homeFov(), 3200, { zoomLag: 0.0, panEnd: 1 });
-  setView("home"); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
+  await flyHome(c[0], 0, sky.homeFov(), 3200);
+  setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
 
 /* ---------------------------------------------------------------- page two content */
@@ -315,12 +350,19 @@ function paintWise(res) {
     }
     g.putImageData(im, 0, 0);
   }
-  if (hasPM(res)) {                                  // where the target sat when WISE looked (about 2010.4)
-    const w = wisePos(res, cv.width, cv.height);
-    g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, cv.height / 300);
-    g.beginPath(); g.arc(w[0], w[1], cv.height * 0.045, 0, Math.PI * 2); g.stroke(); g.restore();
+  for (const m of res.movers || []) {               // every confirmed mover: where AllWISE saw it in 2010
+    const p = toPx(res, m.ra0, m.dec0, cv.width, cv.height);
+    g.save(); g.strokeStyle = "rgba(200,204,210,.9)"; g.lineWidth = Math.max(1.5, cv.height / 300);
+    g.beginPath(); g.arc(p[0], p[1], cv.height * 0.035, 0, Math.PI * 2); g.stroke(); g.restore();
   }
 }
+// sky -> panel pixels; the field spans the panel height, centred, north up, east left
+function toPx(res, ra, dec, cw, ch) {
+  const s = res.field_deg * 3600, cd = Math.cos(res.dec_c * Math.PI / 180);
+  let dra = ra - res.ra_c; dra = ((dra + 540) % 360) - 180;
+  return [cw / 2 - ch * dra * cd * 3600 / s, ch / 2 - ch * (dec - res.dec_c) * 3600 / s];
+}
+const moverAt = (m, year) => propagate({ ra: m.ra0, dec: m.dec0, pmra: m.pmra, pmdec: m.pmdec, epoch: m.epoch0 }, year);
 function ghost(g, x0, y0, x1, y1, size) {           // where it was in 2010 (grey) -> where it is now
   g.save(); g.strokeStyle = "rgba(200,204,210,.85)"; g.lineWidth = Math.max(1.5, size / 300);
   g.beginPath(); g.arc(x0, y0, size * 0.045, 0, Math.PI * 2); g.stroke();
@@ -382,12 +424,12 @@ function drawSpx() {
   g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
   if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
   g.filter = "none";
-  if (hasPM(P)) {
-    const a = P.marks[i], b = P.marks[j];
-    const cur = a && b ? [ox + (a[0] + (b[0] - a[0]) * e) * S, (a[1] + (b[1] - a[1]) * e) * S] : a ? [ox + a[0] * S, a[1] * S] : null;
-    const w0 = wisePos(P, cw, ch);
-    if (cur) { ghost(g, w0[0], w0[1], cur[0], cur[1], S); ring(g, cur[0], cur[1], S, 0.9); }
+  const yr = P.years ? (j > i ? P.years[i] + (P.years[j] - P.years[i]) * e : P.years[i]) : args.mid;
+  for (const m of P.movers || []) {                 // grey = 2010 (AllWISE), dotted line, red = now (this SPHEREx frame)
+    const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
+    ghost(g, p0[0], p0[1], p1[0], p1[1], S * 0.78); ring(g, p1[0], p1[1], S * 0.64, 0.95);
   }
+
   const k = Math.round(tpos) % n;
   $("spxCap").textContent = P.dates[k];
   const frac = n > 1 ? tpos / (n - 1) : 0, tr = $("track").clientWidth;
@@ -459,7 +501,7 @@ let deb = 0;
 qEl.addEventListener("input", () => {
   clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
   if (!q) return showItems(presetItems());
-  const local = presetItems().filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+  const local = presetItems().filter(p => p.name.toLowerCase().includes(q.toLowerCase())).concat(famous(q));
   const num = parseCoords(q); const first = num ? [num] : local;
   showItems(first);
   if (!num && q.length >= 2) deb = setTimeout(() => remote(q, my, first), 260);
@@ -475,27 +517,39 @@ function parseCoords(q) {
   return null;
 }
 const esc = s => s.replace(/'/g, "''");
+const FAMOUS = [
+  ["Sirius", 101.287155, -16.716116, -546.01, -1223.07, "Brightest star"], ["Polaris", 37.954561, 89.264109, 44.48, -11.85, "North Star"],
+  ["Alpha Centauri", 219.902066, -60.833975, -3679.25, 473.67, "Nearest star system"], ["Proxima Centauri", 217.428953, -62.679484, -3781.74, 769.47, "Nearest star"],
+  ["TON 618", 187.2391, 31.4723, 0, 0, "Quasar"], ["Betelgeuse", 88.792939, 7.407064, 27.54, 11.30, "Red supergiant"],
+  ["Vega", 279.234735, 38.783689, 200.94, 286.23, "Star"], ["Rigel", 78.634467, -8.201638, 1.31, 0.50, "Blue supergiant"],
+  ["Arcturus", 213.915300, 19.182409, -1093.39, -2000.06, "Red giant"], ["Andromeda Galaxy", 10.684708, 41.268750, 0, 0, "Galaxy"],
+  ["Orion Nebula", 83.822083, -5.391111, 0, 0, "Nebula"], ["Sagittarius A*", 266.416837, -29.007810, 0, 0, "Galactic centre"],
+  ["Eta Carinae", 161.264775, -59.684431, -7.6, 1.0, "Massive star"], ["Crab Nebula", 83.633083, 22.014500, 0, 0, "Supernova remnant"],
+  ["3C 273", 187.277915, 2.052388, 0, 0, "Quasar"], ["Pleiades", 56.75, 24.116667, 19.997, -45.548, "Star cluster"],
+  ["Kapteyn's Star", 77.919, -45.018, 6505, -5731, "Fast-moving star"], ["61 Cygni", 316.725, 38.749, 4164, 3250, "Fast-moving pair"],
+  ["Groombridge 1830", 178.245, 37.719, 4003, -5813, "Fast-moving star"], ["Wolf 359", 164.120, 7.015, -3842, -2725, "Nearby red dwarf"],
+].map(([name, ra, dec, pmra, pmdec, kind]) => ({ key: "custom", name, ra, dec, pmra, pmdec, epoch: 2000, kind }));
+function famous(q) { const s = q.toLowerCase(); return FAMOUS.filter(f => f.name.toLowerCase().includes(s)); }
+const timed = (url, ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(), ms); return fetch(url, { signal: c.signal }).finally(() => clearTimeout(t)); };
+function parseSesame(t, q) {
+  const J = t.match(/%J\s+([\d.]+)\s+([+-][\d.]+)/), P2 = t.match(/%P\s+([-\d.]+)\s+([-\d.]+)/), N = t.match(/%I\.0\s+(.+)/), C = t.match(/%C\.0\s+(\S+)/);
+  return J ? [{ key: "custom", name: (N ? N[1] : q).trim().replace(/^NAME\s+/, ""), ra: +J[1], dec: +J[2], pmra: P2 ? +P2[1] : 0, pmdec: P2 ? +P2[2] : 0, epoch: 2000, kind: C ? (OTYPE[C[1]] || C[1]) : "" }] : [];
+}
 async function remote(q, my, have) {
-  const ctl = new AbortController(); setTimeout(() => ctl.abort(), 5000);
   const cap = q[0].toUpperCase() + q.slice(1), vars = [...new Set([q, cap, q.toUpperCase()])];
   const like = vars.flatMap(v => [`'${esc(v)}%'`, `'NAME ${esc(v)}%'`, `'* ${esc(v)}%'`, `'V* ${esc(v)}%'`]).map(p => `id LIKE ${p}`).join(" OR ");
   const adql = `SELECT TOP 8 main_id, ra, dec, pmra, pmdec, otype FROM basic JOIN ident ON oid = oidref WHERE ${like}`;
-  let out = [];
-  try {
-    const r = await fetch("https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), { signal: ctl.signal });
-    const j = await r.json();
-    out = (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "" }));
-  } catch (e) { /* fall through to Sesame */ }
-  if (!out.length) {
-    try {
-      const r = await fetch("https://vizier.cfa.harvard.edu/viz-bin/nph-sesame/-oI/SNV?" + encodeURIComponent(q), { signal: ctl.signal });
-      const t = await r.text(), J = t.match(/%J\s+([\d.]+)\s+([+-][\d.]+)/), P2 = t.match(/%P\s+([-\d.]+)\s+([-\d.]+)/), N = t.match(/%I\.0\s+(.+)/), C = t.match(/%C\.0\s+(\S+)/);
-      if (J) out = [{ key: "custom", name: (N ? N[1] : q).trim().replace(/^NAME\s+/, ""), ra: +J[1], dec: +J[2], pmra: P2 ? +P2[1] : 0, pmdec: P2 ? +P2[2] : 0, epoch: 2000, kind: C ? (OTYPE[C[1]] || C[1]) : "" }];
-    } catch (e) { /* offline: presets still work */ }
-  }
-  if (my !== qid || !sEl.classList.contains("open")) return;
-  const seen = new Set(have.map(h => h.name.toLowerCase())); const merged = have.concat(out.filter(o => !seen.has(o.name.toLowerCase()))).slice(0, 8);
-  if (merged.length) showItems(merged);
+  const simbad = timed("https://simbad.cds.unistra.fr/simbad/sim-tap/sync?request=doQuery&lang=adql&format=json&query=" + encodeURIComponent(adql), 6000)
+    .then(r => r.json()).then(j => (j.data || []).filter(x => x[1] != null).map(x => ({ key: "custom", name: String(x[0]).replace(/^NAME\s+/, "").replace(/^\*\s+/, ""), ra: x[1], dec: x[2], pmra: x[3] || 0, pmdec: x[4] || 0, epoch: 2000, kind: OTYPE[x[5]] || x[5] || "" })))
+    .catch(() => []);
+  const mirrors = ["https://cds.unistra.fr/cgi-bin/nph-sesame/-oI/SNV?", "https://vizier.cfa.harvard.edu/viz-bin/nph-sesame/-oI/SNV?", "https://vizier.idia.ac.za/viz-bin/nph-sesame/-oI/SNV?"];
+  const sesame = Promise.any(mirrors.map(m => timed(m + encodeURIComponent(q), 6000).then(r => r.text()).then(t => { const o = parseSesame(t, q); if (!o.length) throw 0; return o; }))).catch(() => []);
+  const show = out => {
+    if (my !== qid || !sEl.classList.contains("open") || !out.length) return;
+    const seen = new Set(have.map(h => h.name.toLowerCase())); const add = out.filter(o => !seen.has(o.name.toLowerCase()));
+    have = have.concat(add).slice(0, 8); showItems(have);
+  };
+  sesame.then(show); simbad.then(show);                  // whichever answers first shows first
 }
 
 /* ---------------------------------------------------------------- top bar */

@@ -31,6 +31,10 @@ LAMBDA_KEY = "LAMBDA_UM"
 
 import sys
 
+# Streamlit Community Cloud has ~1 GB of RAM: dozens of worker processes (each loading astropy) get the app killed.
+# There, and on macOS, use a few threads instead.
+SMALL_HOST = sys.platform == "darwin" or os.path.isdir("/mount/src") or bool(os.environ.get("DRIFT_THREADS"))
+
 _pool: ProcessPoolExecutor | ThreadPoolExecutor | None = None
 _read_pool: ProcessPoolExecutor | ThreadPoolExecutor | None = None
 _sem: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
@@ -39,8 +43,8 @@ _sem: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
 def _get_pool() -> ProcessPoolExecutor | ThreadPoolExecutor:
     global _pool
     if _pool is None:
-        if sys.platform == "darwin":
-            _pool = ThreadPoolExecutor(max_workers=config.PROCESS_WORKERS * 2)
+        if SMALL_HOST:
+            _pool = ThreadPoolExecutor(max_workers=4)
         else:
             _pool = ProcessPoolExecutor(max_workers=config.PROCESS_WORKERS)
     return _pool
@@ -50,8 +54,8 @@ def _get_read_pool() -> ProcessPoolExecutor | ThreadPoolExecutor:
     """S3 reads in processes on Linux (EC2), threads on macOS (avoids macOS fork/spawn crash in Streamlit)."""
     global _read_pool
     if _read_pool is None:
-        if sys.platform == "darwin":
-            _read_pool = ThreadPoolExecutor(max_workers=config.S3_READ_WORKERS * 2)
+        if SMALL_HOST:
+            _read_pool = ThreadPoolExecutor(max_workers=8)
         else:
             _read_pool = ProcessPoolExecutor(max_workers=config.S3_READ_WORKERS)
     return _read_pool

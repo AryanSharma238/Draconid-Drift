@@ -28,7 +28,7 @@ GAIA_TAP = "https://gea.esac.esa.int/tap-server/tap/sync"
 
 
 @functools.lru_cache(maxsize=256)
-def _gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=8.0):
+def _gaia_fast_stars(ra, dec, radius_deg, pm_min_masyr, timeout=2.5):
     """Gaia DR3 stars with total proper motion >= pm_min_masyr inside a cone. [] if Gaia is unreachable."""
     import httpx
     q = (f"SELECT source_id, ra, dec, pmra, pmdec, phot_g_mean_mag FROM gaiadr3.gaia_source "

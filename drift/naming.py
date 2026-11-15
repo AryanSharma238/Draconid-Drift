@@ -26,7 +26,7 @@ STAR_VMAX = 12.0
 PAIR_VMAX = 9.0
 
 
-def _tap(adql, timeout=6.0):
+def _tap(adql, timeout=2.5):
     import httpx
     for url in MIRRORS:
         try:

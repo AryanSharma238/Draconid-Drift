@@ -111,11 +111,11 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
         fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
         fo = ex.submit(in_frame, cube)
         try:
-            movers = fm.result()
+            movers = fm.result(timeout=2.0)
         except Exception:
             movers = []
         try:
-            objects = fo.result()
+            objects = fo.result(timeout=2.0)
         except Exception:
             objects = []
     verdict = verdict_summary(res["verdict"])

@@ -102,6 +102,7 @@ function fitBlend() {                              // cover exactly the area out
   const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
 }
 async function boot() {
+  loadCatalog();
   await sky.init();
   sky.set(0, 0, sky.homeFov()); fitBlend();
   sky.startSpin(2.2); spinning = true;
@@ -179,10 +180,12 @@ function bindSky() {
     
     // Auto-snap to nearest notable star / quasar / deep-sky object if within the selected box
     let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
-    const boxRadiusDeg = Math.max(side / 7200, 0.02);
-    if (CATALOG && CATALOG.length) {
+    const boxRadiusDeg = Math.max(side / 7200, 0.04);
+    // Ensure catalog is populated or fallback to FAMOUS
+    const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
+    if (catList && catList.length) {
       let best = null, bestDist = boxRadiusDeg;
-      for (const obj of CATALOG) {
+      for (const obj of catList) {
         const d = sepDeg([obj.ra, obj.dec], c);
         if (d < bestDist) { bestDist = d; best = obj; }
       }
@@ -302,9 +305,9 @@ async function go(item) {
   req.wiseJob = { survey: cmpI.survey, pw, ph };
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 4200);
-  req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   startProgressBar();
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2800);
+  req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
 

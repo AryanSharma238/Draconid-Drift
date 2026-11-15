@@ -43,6 +43,8 @@
   let tipTransform = $state("");
   let selOn = $state(false);
   let selStyle = $state("");
+  let targetDotOn = $state(false);
+  let targetDotStyle = $state("");
 
   let searchQuery = $state("");
   let searchItems = $state([]);
@@ -202,8 +204,17 @@
       }
       sky.set(r, d, Math.min(f, sky.homeFov()));
       if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.75) / 0.25)));
+      if (targetDotOn) {
+        const p = sky.world2pix(ra, dec);
+        if (p && isFinite(p[0])) {
+          targetDotStyle = `left:${p[0]}px;top:${p[1]}px`;
+        }
+      }
     });
     sky.set(ra, dec, fov);
+    if (targetDotOn && sky) {
+      targetDotStyle = `left:${sky.W / 2}px;top:${sky.H / 2}px`;
+    }
   }
 
   async function flyHome(ra, dec, fov, dur) {
@@ -222,16 +233,21 @@
 
   function startProgressBar() {
     stopProgressBar();
-    progWidth = 0;
+    progWidth = 5;
     const startT = performance.now();
-    const duration = 3800;
+    const duration = 2800; // smooth 2.8s pacing matching the flight
     progInterval = setInterval(() => {
       const elapsed = performance.now() - startT;
       const t = Math.min(1, elapsed / duration);
-      progWidth = Math.min(smooth(t) * 97, 98);
+      // Continuous smooth ease-out ramp approaching 98%
+      progWidth = 5 + smooth(t) * 92;
       if (t >= 1) {
         clearInterval(progInterval);
         progInterval = null;
+        // If data has already arrived, immediately reveal!
+        if (stageResult && view === "waiting") {
+          tryReveal();
+        }
       }
     }, 30);
   }
@@ -245,7 +261,7 @@
       progWidth = 100;
       setTimeout(() => {
         progWidth = 0;
-      }, 350);
+      }, 400);
     } else {
       progWidth = 0;
     }
@@ -401,6 +417,7 @@
     const res = stageResult;
     if (!req || view === "flying" || view === "view" || view === "settling") return;
     if (stageError) {
+      targetDotOn = false;
       stopProgressBar(false);
       toast(stageError);
       return abortHome();
@@ -408,6 +425,7 @@
     if (!res || res.nonce !== req.nonce) return;
 
     stopProgressBar(true);
+    targetDotOn = false;
     view = "settling";
     last_res = res;
     loadFrames(res);
@@ -473,6 +491,7 @@
     view = "leaving";
     shown = false;
     selOn = false;
+    targetDotOn = false;
     if (was === "view" || was === "settling") await unsquish();
     clipEl.style.clipPath = "inset(0 0 0 0 round 0px)";
     innerEl.style.transform = "none";
@@ -1112,17 +1131,27 @@
         targetName = "Selected area",
         targetObj = null;
 
-      // Snap to nearest catalog star / famous star if clicked near one
-      const snapRadius = Math.max(0.35, (side / 3600) * 1.5);
+      // Automatically find and snap to the most prominent / biggest space element within the range
+      const boxRadiusDeg = isClick
+        ? Math.max(0.4, (sky.fov() / sky.W) * 24)
+        : Math.max(side / 7200, 0.05);
+
       const catList = CATALOG && CATALOG.length ? CATALOG : FAMOUS;
       if (catList && catList.length) {
-        let best = null,
-          bestDist = snapRadius;
+        let best = null;
+        let bestScore = -Infinity;
         for (const obj of catList) {
           const d = sepDeg([obj.ra, obj.dec], c);
-          if (d < bestDist) {
-            bestDist = d;
-            best = obj;
+          if (d <= boxRadiusDeg * 1.5) {
+            // Prioritize major space elements: weight by size / prominence rank (nb) and closeness
+            const sizeVal = obj.size || 1;
+            const rankVal = obj.nb || 1;
+            const distFactor = Math.max(0.01, 1 - d / (boxRadiusDeg * 1.5));
+            const score = (Math.log10(rankVal + 1) * 10 + Math.log10(sizeVal + 1) * 20) * distFactor;
+            if (score > bestScore) {
+              bestScore = score;
+              best = obj;
+            }
           }
         }
         if (best) {
@@ -1132,6 +1161,38 @@
           targetObj = best;
         }
       }
+
+      // If no catalog entry was in range, sample pixel peak brightness if available
+      if (!targetObj) {
+        try {
+          const sw = 32, sh = 32;
+          const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+          const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+          let maxB = 0, bestX = sw / 2, bestY = sh / 2;
+          for (let py = 0; py < sh; py++) {
+            for (let px = 0; px < sw; px++) {
+              const idx = (py * sw + px) * 4;
+              const b_ = data[idx] + data[idx + 1] + data[idx + 2];
+              if (b_ > maxB) { maxB = b_; bestX = px; bestY = py; }
+            }
+          }
+          if (maxB > 50) {
+            const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
+            const degW = side / 3600;
+            const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
+            targetRa = ((c[0] + dRa) % 360 + 360) % 360;
+            targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+          }
+        } catch (e) {}
+      }
+
+      // Show tracking marker ("little white ball") at the target's screen position
+      let targetPix = sky.world2pix(targetRa, targetDec);
+      if (!targetPix || !isFinite(targetPix[0])) {
+        targetPix = [cx, cy];
+      }
+      targetDotStyle = `left:${targetPix[0]}px;top:${targetPix[1]}px`;
+      targetDotOn = true;
 
       go({
         key: targetObj && targetObj.key !== "custom" ? targetObj.key : "custom",
@@ -1311,6 +1372,7 @@
       <div id="prog-bar" bind:this={progBarEl} style="width:{progWidth}%"></div>
     </div>
   </div>
+  <div id="target-dot" class:on={targetDotOn} style={targetDotStyle} aria-hidden="true"></div>
   <div id="veil" onclick={() => closeSearch()}></div>
 
   <header id="bar">

@@ -63,6 +63,12 @@ nav{display:flex;align-items:center;gap:6px}
 #app[data-view=waiting] #beacon,#app[data-view=settling] #beacon{animation:breathe 1.8s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:.15;transform:translate(-50%,-50%) scale(.8)}50%{opacity:.9;transform:translate(-50%,-50%) scale(1.15)}}
 
+/* target tracking dot ("little white ball") */
+#target-dot{position:absolute;width:12px;height:12px;margin-left:-6px;margin-top:-6px;border-radius:50%;background:#ffffff;box-shadow:0 0 10px 2px rgba(255,255,255,.9),0 0 20px 4px rgba(255,255,255,.45);pointer-events:none;z-index:15;opacity:0;transition:opacity .25s ease,transform .18s ease-out}
+#target-dot.on{opacity:1}
+#target-dot::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid rgba(255,255,255,.6);animation:pulse-dot 1.4s ease-out infinite}
+@keyframes pulse-dot{0%{transform:scale(.7);opacity:1}100%{transform:scale(1.8);opacity:0}}
+
 /* side-of-screen progress bar with percentage completed (EC2 / TAP API) */
 #side-prog{position:absolute;right:28px;top:50%;transform:translateY(-50%);width:min(250px,65vw);padding:14px 16px;border-radius:16px;background:rgba(19,22,26,.82);border:1px solid rgba(255,255,255,.1);backdrop-filter:blur(16px);opacity:0;transition:opacity .4s;pointer-events:none;z-index:9;box-shadow:0 12px 32px rgba(0,0,0,.45)}
 #side-prog-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}

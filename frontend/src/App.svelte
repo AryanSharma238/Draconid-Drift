@@ -188,26 +188,21 @@
       f0 = sky.fov();
     const u0 = unit(c0[0], c0[1]),
       u1 = unit(ra, dec);
-    const fPeak = Math.min(
-      sky.homeFov(),
-      Math.max(f0, Math.hypot(...offsetOf(c0, [ra, dec])) * 1.5, fov * 2)
-    );
+    const lnF0 = Math.log(f0);
+    const lnF1 = Math.log(fov);
     await tween(dur, (t) => {
-      const [r, d] = radec(slerp(u0, u1, smooth(t)));
-      let f;
-      if (t < 0.3) {
-        const q = t / 0.3;
-        f = f0 + (fPeak - f0) * smooth(q);
-      } else {
-        const q = (t - 0.3) / 0.7;
-        f = fPeak * Math.pow(fov / fPeak, smooth(q));
-      }
+      // Direct forward warp plunge: continuous acceleration diving into the starfield
+      // smooth(t) gives a gentle departure, high-speed star-zoom, and smooth deceleration into the field
+      const p = smooth(t);
+      const [r, d] = radec(slerp(u0, u1, p));
+      const f = Math.exp(lnF0 + (lnF1 - lnF0) * p);
       sky.set(r, d, Math.min(f, sky.homeFov()));
-      if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.75) / 0.25)));
+      // Seamlessly cross-fade the high-res smoothed 2MASS/SPHEREx cutout as we reach target depth
+      if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.7) / 0.3)));
       if (targetDotOn) {
-        const p = sky.world2pix(ra, dec);
-        if (p && isFinite(p[0])) {
-          targetDotStyle = `left:${p[0]}px;top:${p[1]}px`;
+        const pt = sky.world2pix(ra, dec);
+        if (pt && isFinite(pt[0])) {
+          targetDotStyle = `left:${pt[0]}px;top:${pt[1]}px`;
         }
       }
     });
@@ -235,7 +230,7 @@
     stopProgressBar();
     progWidth = 5;
     const startT = performance.now();
-    const duration = 2800; // smooth 2.8s pacing matching the flight
+    const duration = 2950; // smooth 3.0s pacing matching the flight
     progInterval = setInterval(() => {
       const elapsed = performance.now() - startT;
       const t = Math.min(1, elapsed / duration);
@@ -389,7 +384,7 @@
     ).catch(() => null);
 
     startProgressBar();
-    await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2600);
+    await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000);
     req.arrived = true;
     if (skyCanvas) overlay.style.opacity = "1";
     view = "waiting";
@@ -456,7 +451,7 @@
               j.ph,
               WISETONE
             );
-        return await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 1200))]);
+        return await Promise.race([job, new Promise((r) => setTimeout(() => r(null), 2500))]);
       } catch (e) {
         return null;
       }

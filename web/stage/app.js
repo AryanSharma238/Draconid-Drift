@@ -234,22 +234,15 @@ function offsetOf(c, t) {
 async function flyTo(ra, dec, fov, dur) {
   const c0 = sky.center(), f0 = sky.fov();
   const u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
-  const fPeak = Math.min(sky.homeFov(), Math.max(f0, Math.hypot(...offsetOf(c0, [ra, dec])) * 1.5, fov * 2));
+  const lnF0 = Math.log(f0);
+  const lnF1 = Math.log(fov);
   await tween(dur, t => {
-    // Warp-speed acceleration curve (slow takeoff, high-velocity swoop, deep decelerating dive)
-    const p = Math.pow(t, 2.2);
-    const [r, d] = radec(slerp(u0, u1, smooth(t)));
-    let f;
-    if (t < 0.3) {
-      const q = t / 0.3;
-      f = f0 + (fPeak - f0) * smooth(q);
-    } else {
-      const q = (t - 0.3) / 0.7;
-      // Exponential zoom through light cones
-      f = fPeak * Math.pow(fov / fPeak, smooth(q));
-    }
+    // Direct exponential forward plunge through the stars
+    const p = smooth(t);
+    const [r, d] = radec(slerp(u0, u1, p));
+    const f = Math.exp(lnF0 + (lnF1 - lnF0) * p);
     sky.set(r, d, Math.min(f, sky.homeFov()));
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.75) / 0.25)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.7) / 0.3)));
   });
   sky.set(ra, dec, fov);
 }
@@ -310,7 +303,7 @@ async function go(item) {
   startProgressBar();
   // Cinematic 3.0-second journey: smooth warp flight so whether cached or uncached,
   // the animation continues gracefully without jarring or abrupt cut-offs
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2200);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }

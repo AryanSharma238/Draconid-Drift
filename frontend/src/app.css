@@ -135,8 +135,9 @@ nav{display:flex;align-items:center;gap:6px}
 #info{aspect-ratio:auto;max-height:none}
 
 /* area selection + first-move hint */
-#sel{position:absolute;left:0;top:0;width:0;height:0;border:1.5px solid #c58d96;background:rgba(122,74,81,.22);border-radius:0;opacity:0;pointer-events:none;z-index:10;transition:opacity .25s}
+#sel{position:absolute;left:0;top:0;width:0;height:0;border:1.5px solid #e8be8c;background:rgba(232,190,140,0.18);box-shadow:0 0 16px rgba(232,190,140,0.3);border-radius:6px;opacity:0;pointer-events:none;z-index:10;transition:opacity .4s ease, border-color .3s ease, background .3s ease}
 #sel.on{opacity:1}
+#sel.fading{opacity:0;transform:scale(1.02);transition:opacity 0.8s ease-out, transform 0.8s ease-out}
 #app:not([data-view=home]):not([data-view=flying]) #sel{opacity:0}
 #app[data-view=flying] #sel{transition:opacity .9s;opacity:0}
 #tip{position:absolute;left:0;top:0;padding:7px 12px;border-radius:10px;background:#7A4A51;color:rgba(255,255,255,.88);font-size:13px;white-space:nowrap;opacity:0;pointer-events:none;z-index:12;transition:opacity .35s}

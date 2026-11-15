@@ -269,8 +269,17 @@ function bindSky() {
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
     if (side > 7200) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 2°.`); }
     
+    // Keep the selected area visible with a smooth background fade into the flight
+    selEl.classList.add("fading");
+    setTimeout(() => {
+      selEl.classList.remove("on", "fading");
+    }, 900);
+
   // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
-  let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
+  let targetRa = c[0], targetDec = c[1];
+  const raStr = `${c[0].toFixed(2)}°`;
+  const decStr = `${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
+  let targetName = `Selected Area (${raStr}, ${decStr})`;
   try {
     const sw = 48, sh = 48;
     const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
@@ -290,6 +299,7 @@ function bindSky() {
       const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
       targetRa = ((c[0] + dRa) % 360 + 360) % 360;
       targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+      targetName = `Selected Object (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
     }
   } catch (e) {
     // Fallback to catalog or center if cutout sampling fails
@@ -340,27 +350,53 @@ function updateLockAndWarp(ra, dec, t, label) {
   let cx = W / 2, cy = H / 2, onScreen = false;
   try {
     const p = sky.world2pix(ra, dec);
-    if (p && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[0] > -60 && p[0] < W + 60 && p[1] > -60 && p[1] < H + 60) {
+    if (p && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[0] > -120 && p[0] < W + 120 && p[1] > -120 && p[1] < H + 120) {
       cx = p[0]; cy = p[1]; onScreen = true;
     }
   } catch (e) {}
   lastTargetScreen = [cx, cy];
 
   if (beaconEl) {
-    if (onScreen || t > 0.35) {
-      beaconEl.style.left = `${cx}px`;
-      beaconEl.style.top = `${cy}px`;
-      beaconEl.style.opacity = String(clamp01(onScreen ? 1 : (t - 0.35) * 3));
-      const ring = beaconEl.querySelector(".lock-ring");
-      if (ring) {
-        const s = 1.25 - 0.25 * smooth(clamp01((t - 0.2) / 0.6));
-        ring.style.transform = `scale(${s.toFixed(3)})`;
-      }
-    } else {
-      beaconEl.style.opacity = "0";
+    beaconEl.style.left = `${cx}px`;
+    beaconEl.style.top = `${cy}px`;
+
+    // Stage 1: Pan & Track (0.0 to 0.45)
+    // Stage 2: Identify & Lock (0.45 to 0.70)
+    // Stage 3: High-speed Zoom dive (0.70 to 1.0)
+    let opacity = 0;
+    if (onScreen) {
+      opacity = 1;
+    } else if (t > 0.25) {
+      opacity = clamp01((t - 0.25) * 4);
     }
+    beaconEl.style.opacity = String(opacity);
+
+    const ring = beaconEl.querySelector(".lock-ring");
+    if (ring) {
+      // Reticle shrinks into a sharp precise lock as camera aligns
+      let scale = 1.6;
+      if (t < 0.45) {
+        scale = 1.6 - 0.4 * smooth(t / 0.45);
+      } else if (t < 0.75) {
+        scale = 1.2 - 0.2 * smooth((t - 0.45) / 0.3);
+      } else {
+        scale = 1.0;
+      }
+      ring.style.transform = `scale(${scale.toFixed(3)})`;
+    }
+
     const lab = beaconEl.querySelector(".lock-label");
-    if (lab) lab.textContent = label || "";
+    if (lab) {
+      // Dynamic readout: show identification status
+      let text = label || "Acquiring Coordinates...";
+      if (t < 0.35) {
+        lab.textContent = `TARGETING: ${text}`;
+      } else if (t < 0.75) {
+        lab.textContent = `LOCKED: ${text}`;
+      } else {
+        lab.textContent = text;
+      }
+    }
   }
 }
 
@@ -384,27 +420,31 @@ async function flyTo(ra, dec, fov, dur, label = "") {
   const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
   const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
   const kA = visible ? startFrac : OFF;
-  const tA = visible ? 0 : 0.45;                    // share of the time spent turning the globe
+  // Give camera plenty of time (42% of 3.0s = ~1.26s) to smoothly pan and center onto the celestial object
+  const tA = visible ? 0.25 : 0.45;
   const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));
   const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));
   const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
+
   await tween(dur, t => {
     if (t < tA) {
+      // Phase 1: Camera pan and sphere rotation to orient towards target
       const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
-      const p = ss(clamp01((q - 0.1) / 0.9)), c = radec(slerp(u0, uA, p));
-      const out = ss(clamp01(q / 0.42));
+      const p = ss(clamp01((q - 0.05) / 0.95)), c = radec(slerp(u0, uA, p));
+      const out = ss(clamp01(q / 0.4));
       const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
-      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.42) / 0.58)));
-      const f = q < 0.42 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
+      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.4) / 0.6)));
+      const f = q < 0.4 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
       sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
     } else {
+      // Phase 2: Steady dive & zoom onto the identified star
       const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
       const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
       const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
       sky.set(c[0], c[1], f);
     }
     updateLockAndWarp(ra, dec, t, label);
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.82) / 0.18)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.85) / 0.15)));
   });
   sky.set(ra, dec, fov);
   updateLockAndWarp(ra, dec, 1, label);
@@ -467,7 +507,8 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2600, item.name || "Target");
+  const targetLabel = item.name || (item.ra != null && item.dec != null ? `${Number(item.ra).toFixed(2)}°, ${Number(item.dec) >= 0 ? "+" : ""}${Number(item.dec).toFixed(2)}°` : "Target");
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000, targetLabel);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
@@ -480,7 +521,7 @@ function startProgressBar() {
   bar.style.width = "0%";
   let progress = 0;
   const startT = performance.now();
-  const duration = 2500;  // fills while the 2.6 s flight runs
+  const duration = 2900;  // fills while the 3.0 s flight runs
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);

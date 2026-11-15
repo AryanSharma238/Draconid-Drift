@@ -99,6 +99,16 @@ def _load(path: Path) -> _Index:
     hit = _cache.get(path)
     if hit and hit[0] == mtime:
         return hit[1]
+    npz_path = path.with_suffix('.npz')
+    if npz_path.is_file() and npz_path.stat().st_mtime >= mtime:
+        try:
+            z = np.load(npz_path)
+            idx = _Index(list(z['key']), z['ra'], z['dec'], z['mjd_beg'], z['cen'])
+            _cache[path] = (mtime, idx)
+            log.info('loaded footprint index from binary npz: %d rows', len(idx.rows))
+            return idx
+        except Exception as e:
+            log.warning('npz index read failed %s, falling back to csv: %s', npz_path, e)
     # stream the CSV straight into compact arrays: a dict per row cost ~1.7 KB (460 MB for one index)
     from array import array
     slim, corners, mjds = [], array("d"), array("d")

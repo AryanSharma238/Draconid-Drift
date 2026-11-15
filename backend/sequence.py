@@ -278,9 +278,12 @@ class Loaded:
     failed: list[tuple[str, str]] = field(default_factory=list)  # (obs_id, reason)
 
 
-async def load_frames(grid: Grid, det: int) -> Loaded:
+async def load_frames(grid: Grid, det: int, max_frames: int | None = None) -> Loaded:
     """All frames of the stack (L1-cached by fetch.get_frames). Raises FileNotFoundError/ValueError from the index."""
     refs = sorted(await index.find_images(grid.ra, grid.dec, det), key=lambda r: r.t_mjd)
+    if max_frames and len(refs) > max_frames:
+        keep = np.unique(np.linspace(0, len(refs) - 1, max_frames).round().astype(int))
+        refs = [refs[k] for k in keep]
     pass_of = group_refs_by_pass(refs)
     got: dict[int, Frame] = {}
     failed: list[tuple[str, str]] = []

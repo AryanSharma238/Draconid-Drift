@@ -450,9 +450,21 @@ async function flyTo(ra, dec, fov, dur, label = "") {
   updateLockAndWarp(ra, dec, 1, label);
   if (warpCv) warpCv.classList.remove("on");
 }
-async function flyHome(ra, dec, fov, dur) {         // back out to the whole sky
-  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec), f0 = Math.log(sky.fov()), f1 = Math.log(fov);
-  await tween(dur, t => { const p = smooth(t), [r, d] = radec(slerp(u0, u1, p)); sky.set(r, d, Math.exp(f0 + (f1 - f0) * p)); });
+async function flyHome(ra, dec, fov, dur) {         // cinematic pull-back & zoom out to the whole celestial sphere
+  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
+  const f0 = Math.log(sky.fov()), f1 = Math.log(fov);
+  
+  // Custom 5th order smoother for silky space pull-back (quintic ease-in-out)
+  const qsmooth = x => x * x * x * (x * (x * 6 - 15) + 10);
+  
+  await tween(dur, t => {
+    const p = qsmooth(t);
+    // Smooth spherical slerp from target direction back to home orientation
+    const [r, d] = radec(slerp(u0, u1, p));
+    // Exponential logarithmic zoom expansion
+    const curFov = Math.exp(f0 + (f1 - f0) * p);
+    sky.set(r, d, curFov);
+  });
   sky.set(ra, dec, fov);
 }
 
@@ -615,10 +627,11 @@ async function leave(fromError = false) {
   selEl.classList.remove("on");
   if (was === "view" || was === "settling") await unsquish();
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
-  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .4s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 450); }
+  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .6s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 650); }
   setView("flying");
   const c = sky.center();
-  await flyHome(c[0], 0, sky.homeFov(), 1800);
+  // Cinematic 2.4s pull-back and zoom out with graceful galactic deceleration
+  await flyHome(c[0], 0, sky.homeFov(), 2400);
   clearLockAndWarp();
   setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
@@ -627,13 +640,17 @@ async function unsquish() {
   {
     const { W, H, S, k, A, dx, dy } = geom();
     clip.style.visibility = "visible"; $("spxCv").classList.remove("on");
-    await new Promise(r => setTimeout(r, 150));
-    await tween(600, t => {
+    await new Promise(r => setTimeout(r, 120));
+    clip.style.willChange = "clip-path, transform";
+    inner.style.willChange = "transform";
+    await tween(700, t => {
       const p = 1 - smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
-      inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
+      inner.style.transform = `translate3d(${dx * p}px,${dy * p}px,0) scale(${1 + (k - 1) * p})`;
       const g = smooth(t);
       clip.style.clipPath = `inset(${(cy - h / 2) * (1 - g)}px ${(W - cx - w / 2) * (1 - g)}px ${(H - cy - h / 2) * (1 - g)}px ${(cx - w / 2) * (1 - g)}px round ${26 * (1 - t)}px)`;
     });
+    clip.style.willChange = "auto";
+    inner.style.willChange = "auto";
   }
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
 }

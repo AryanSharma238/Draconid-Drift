@@ -90,7 +90,7 @@ if req and req.get("nonce") != S.seen:
             payload = dict(payload, nonce=req["nonce"])
             if key not in PRESETS and name_job is not None:
                 try:
-                    payload["name"] = name_job.result(timeout=3.0)
+                    payload["name"] = name_job.result(timeout=0.5)
                 except Exception:
                     pass
             S.result = payload

@@ -107,17 +107,18 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     from concurrent.futures import ThreadPoolExecutor
     from .inframe import in_frame
     tgt = dict(name=name, ra=float(ra0), dec=float(dec0), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch0))
-    with ThreadPoolExecutor(2) as ex:            # Gaia and SIMBAD lookups at the same time
-        fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
-        fo = ex.submit(in_frame, cube)
-        try:
-            movers = fm.result(timeout=2.0)
-        except Exception:
-            movers = []
-        try:
-            objects = fo.result(timeout=2.0)
-        except Exception:
-            objects = []
+    ex = ThreadPoolExecutor(2)            # Gaia and SIMBAD lookups at the same time
+    fm = ex.submit(find_movers, cube, wise_epoch=cmp["epoch"], target=tgt)
+    fo = ex.submit(in_frame, cube)
+    try:
+        movers = fm.result(timeout=0.6)
+    except Exception:
+        movers = []
+    try:
+        objects = fo.result(timeout=0.6)
+    except Exception:
+        objects = []
+    ex.shutdown(wait=False)
     verdict = verdict_summary(res["verdict"])
     tm = [m for m in movers if m["name"] == name]
     if tm:                                         # long-baseline motion confirmed against the archive image

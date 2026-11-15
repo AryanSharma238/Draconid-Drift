@@ -166,7 +166,7 @@ function bindSky() {
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
   window.addEventListener("mouseup", e => { if (sel && e.button === 2) stop(e); }, true);
-  window.addEventListener("pointerup", e => {
+  window.addEventListener("pointerup", async e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
     const l = Math.min(s0.x0, s0.x1), r_ = Math.max(s0.x0, s0.x1), t = Math.min(s0.y0, s0.y1), b = Math.max(s0.y0, s0.y1);
@@ -178,10 +178,31 @@ function bindSky() {
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
     if (side > 5400) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one under 1.5°.`); }
     
-    // Auto-snap to nearest notable star / quasar / deep-sky object if within the selected box
-    let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
-    const boxRadiusDeg = Math.max(side / 7200, 0.04);
-    // Ensure catalog is populated or fallback to FAMOUS
+  // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
+  let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
+  try {
+    const sw = 48, sh = 48;
+    const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+    const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+    let maxB = 0, bestX = sw / 2, bestY = sh / 2;
+    for (let py = 0; py < sh; py++) {
+      for (let px = 0; px < sw; px++) {
+        const idx = (py * sw + px) * 4;
+        const b = data[idx] + data[idx + 1] + data[idx + 2];
+        if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+      }
+    }
+    // If a clear star peak was found in the box, latch dead-center onto its brightest peak
+    if (maxB > 60) {
+      const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
+      const degW = side / 3600;
+      const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
+      targetRa = ((c[0] + dRa) % 360 + 360) % 360;
+      targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+    }
+  } catch (e) {
+    // Fallback to catalog or center if cutout sampling fails
+    const boxRadiusDeg = Math.max(side / 7200, 0.08);
     const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
     if (catList && catList.length) {
       let best = null, bestDist = boxRadiusDeg;
@@ -189,12 +210,11 @@ function bindSky() {
         const d = sepDeg([obj.ra, obj.dec], c);
         if (d < bestDist) { bestDist = d; best = obj; }
       }
-      if (best) {
-        targetRa = best.ra; targetDec = best.dec; targetName = best.name;
-      }
+      if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
     }
-    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
-  }, true);
+  }
+  go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+}, true);
 }
 
 /* ---------------------------------------------------------------- flight */
@@ -332,13 +352,16 @@ async function tryReveal() {
   stopProgressBar(true);
   setView("settling");
   fillPage(res);
-  const framesPromise = loadFrames(res);
+  const framesPromise = Promise.race([
+    loadFrames(res),
+    new Promise(r => setTimeout(r, 600))
+  ]);
   const wisePromise = (async () => {
     try {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
         Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
       const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 1200))]);
+      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 800))]);
     } catch (e) { return null; }
   })();
 
@@ -358,7 +381,7 @@ async function tryReveal() {
   await tweenPromise;
   paintWise(res);
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
-  await new Promise(r => setTimeout(r, 200));
+  await new Promise(r => setTimeout(r, 100));
   clip.style.visibility = "hidden";
   setView("view"); startPlayer();
 }

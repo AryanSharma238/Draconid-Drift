@@ -204,50 +204,30 @@ const ENDFOV = () => req.fieldDeg * sky.W / (SF() * panelA());   // sky width so
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
-// Fly to a target and never lose it: (1) turn the globe until the target sits a little below-right of the
-// centre, zooming only as much as keeps it on screen; (2) zoom in while it glides diagonally to the centre,
-// landing exactly on the final view (no overshoot).
-const OFF = [0.13, -0.17];                           // where the target waits during the zoom, as a fraction of the view (x right, y up)
-function offsetOf(c, t) {                            // target relative to the view centre, degrees on the sky (x right = west, y up = north)
+function offsetOf(c, t) {
   const R = Math.PI / 180, a0 = c[0] * R, d0 = c[1] * R, a = t[0] * R, d = t[1] * R;
   const cosc = Math.sin(d0) * Math.sin(d) + Math.cos(d0) * Math.cos(d) * Math.cos(a - a0);
   const xi = Math.cos(d) * Math.sin(a - a0) / cosc, eta = (Math.cos(d0) * Math.sin(d) - Math.sin(d0) * Math.cos(d) * Math.cos(a - a0)) / cosc;
   return cosc > 0 ? [-xi / R, eta / R] : [180, 0];
 }
-function centreFor(t, off) {                         // centre that puts the target at screen offset off (deg): a true step on the sphere
-  const R = Math.PI / 180, xi = off[0] * R, eta = -off[1] * R, a0 = t[0] * R, d0 = t[1] * R, rho = Math.hypot(xi, eta);
-  if (rho < 1e-12) return [t[0], t[1]];
-  const c = Math.atan(rho), sc = Math.sin(c), cc = Math.cos(c);
-  const dec = Math.asin(cc * Math.sin(d0) + eta * sc * Math.cos(d0) / rho);
-  const ra = a0 + Math.atan2(xi * sc, rho * Math.cos(d0) * cc - eta * Math.sin(d0) * sc);
-  return [((ra / R) % 360 + 360) % 360, dec / R];
-}
+
 async function flyTo(ra, dec, fov, dur) {
-  const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
-  const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
-  const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
-  const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
-  const kA = visible ? startFrac : OFF;
-  const tA = visible ? 0 : 0.5;                     // share of the time spent turning the globe
-    const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));   // wide enough to see where we are going
-  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));    // phase 1 ends halfway (in zoom) between the wide view and the target
-  const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
+  const c0 = sky.center(), f0 = sky.fov();
+  const u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
+  const fPeak = Math.min(sky.homeFov(), Math.max(f0, Math.hypot(...offsetOf(c0, [ra, dec])) * 1.5, fov * 2));
   await tween(dur, t => {
-    if (t < tA) {                                    // phase 1: ease out to a wide view, turn, then come back in
-      const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
-      const p = ss(clamp01((q - 0.12) / 0.88)), c = radec(slerp(u0, uA, p));          // the globe starts turning just after the zoom-out begins
-      const out = ss(clamp01(q / 0.45));                                               // ~1.7 s to widen, not a jump
-      const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
-      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.45) / 0.55)));
-      const f = q < 0.45 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
-      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
-    } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
-      const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
-      const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
-      const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
-      sky.set(c[0], c[1], f);
+    const p = smooth(t);
+    const [r, d] = radec(slerp(u0, u1, p));
+    let f;
+    if (t < 0.4) {
+      const q = t / 0.4;
+      f = f0 + (fPeak - f0) * smooth(q);
+    } else {
+      const q = (t - 0.4) / 0.6;
+      f = fPeak + (fov - fPeak) * smooth(q);
     }
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.88) / 0.12)));
+    sky.set(r, d, Math.min(f, sky.homeFov()));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.8) / 0.2)));
   });
   sky.set(ra, dec, fov);
 }

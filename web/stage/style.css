@@ -58,7 +58,7 @@ nav{display:flex;align-items:center;gap:6px}
 #app.searching #veil{opacity:1;pointer-events:auto}
 
 
-/* loading ring while the data arrives */
+/* loading ring while the data arrives - keep centered in the viewport */
 #beacon{position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;border:1.5px solid var(--wine-hi);opacity:0;pointer-events:none;z-index:9}
 #app[data-view=waiting] #beacon{animation:breathe 1.8s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:.15;transform:scale(.8)}50%{opacity:.9;transform:scale(1.15)}}

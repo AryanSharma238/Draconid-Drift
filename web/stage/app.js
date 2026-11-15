@@ -308,8 +308,9 @@ async function go(item) {
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  // Cinematic warp-speed dive (+0.5s duration gives Streamlit ~1.2s to compute & bridge data in background)
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 1250);
+  // Cinematic 3.0-second journey: smooth warp flight so whether cached or uncached,
+  // the animation continues gracefully without jarring or abrupt cut-offs
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 2200);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
   setView("waiting"); tryReveal();
 }
@@ -319,17 +320,18 @@ function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
   if (!bar) return;
-  bar.style.width = "40%";
-  let progress = 40;
+  bar.style.width = "0%";
+  let progress = 0;
   const startT = performance.now();
-  const duration = 1600; // Smooth 1.6s progression
+  const duration = 2800; // Continuous 2.8s smooth pacing matching the 3-second transition
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
-    progress = 40 + t * 57; // reaches 97% smoothly
+    // Smooth ease-out ramp to 97%
+    progress = smooth(t) * 97;
     bar.style.width = Math.min(progress, 98) + "%";
     if (t >= 1) { clearInterval(progInterval); progInterval = null; }
-  }, 25);
+  }, 30);
 }
 function stopProgressBar(complete = false) {
   if (progInterval) { clearInterval(progInterval); progInterval = null; }
@@ -337,7 +339,7 @@ function stopProgressBar(complete = false) {
   if (!bar) return;
   if (complete) {
     bar.style.width = "100%";
-    setTimeout(() => { bar.style.width = "0%"; }, 200);
+    setTimeout(() => { bar.style.width = "0%"; }, 350);
   } else {
     bar.style.width = "0%";
   }
@@ -363,16 +365,16 @@ async function tryReveal() {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
         Math.hypot(...offsetOf([res.ra_c, res.dec_c], req.pos)) * 3600 < 6;
       const job = same ? j.p : renderCutout(j.survey, res.ra_c, res.dec_c, res.field_deg * j.pw / j.ph, j.pw, j.ph, WISETONE);
-      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 200))]);
+      return await Promise.race([job, new Promise(r => setTimeout(() => r(null), 300))]);
     } catch (e) { return null; }
   })();
 
   const { W, H, S, k, A, dx, dy } = geom();
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
-  setTimeout(() => app.classList.add("shown"), 40);
+  setTimeout(() => app.classList.add("shown"), 100);
   
-  // Animate the squish transition immediately without waiting on archive image tiles
-  const tweenPromise = tween(300, t => {
+  // Smooth 800ms squish transition into the SPHEREx player (completing the full ~3s cinematic feel)
+  const tweenPromise = tween(800, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
     inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
     clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;

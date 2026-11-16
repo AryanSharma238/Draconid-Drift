@@ -27,13 +27,13 @@ def _num(v):
         return None
 
 
-def _gaia(ra, dec, r_deg, timeout=20.0):
+def _gaia(ra, dec, r_deg, timeout=4.0):
     """Gaia DR3 stars with a parallax better than 5 sigma (distance good to 20%), brightest first."""
     import csv
     import io
 
     import httpx
-    q = ("SELECT TOP 1500 source_id, ra, dec, parallax, pmra, pmdec, radial_velocity, phot_g_mean_mag FROM gaiadr3.gaia_source "
+    q = ("SELECT TOP 350 source_id, ra, dec, parallax, pmra, pmdec, radial_velocity, phot_g_mean_mag FROM gaiadr3.gaia_source "
          f"WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},{dec:.6f},{r_deg:.5f})) "
          "AND parallax_over_error > 5 AND parallax > 0 ORDER BY phot_g_mean_mag")
     try:
@@ -47,8 +47,8 @@ def _simbad(ra, dec, r_deg):
     from .naming import _tap
     cols = ("oid, main_id, otype, sp_type, ra, dec, plx_value, rvz_redshift, rvz_radvel, pmra, pmdec, nbref, "
             "galdim_majaxis AS majax, galdim_minaxis AS minax, galdim_angle AS pa")
-    return _tap(f"SELECT TOP 3000 {cols} FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},"
-                f"{dec:.6f},{r_deg:.6f})) AND (plx_value > 0.05 OR rvz_redshift > 0.0003)", 8.0) or []
+    return _tap(f"SELECT TOP 500 {cols} FROM basic WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},"
+                f"{dec:.6f},{r_deg:.6f})) AND (plx_value > 0.05 OR rvz_redshift > 0.0003)", 4.0) or []
 
 
 def _offset(ra, dec, ra_c, dec_c):

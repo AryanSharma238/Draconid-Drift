@@ -17,6 +17,7 @@
   <div id="beacon" aria-hidden="true"></div>
   <div id="status" role="status">Fetching SPHEREx frames</div>
   <div id="prog-wrap" aria-hidden="true"><div id="prog-bar"></div></div>
+  <div id="loadBox" role="status"><span id="loadTxt"></span><button type="button" id="retryBtn">Retry</button></div>
   <div id="veil"></div>
 
   <section id="land">
@@ -35,14 +36,25 @@
     </dl>
     <!-- stage 2: the globe on the right, the list and the data on the left -->
     <div class="lside">
+      <section class="lbox lquick" aria-label="Start here">
+        <button type="button" data-key="barnard"><b>See a star move</b><small>Barnard's Star</small></button>
+        <button type="button" data-key="rdra"><b>See brightness change</b><small>R Draconis</small></button>
+        <button type="button" data-key="wise0855"><b>Explore a cold brown dwarf</b><small>WISE 0855</small></button>
+      </section>
       <section class="lbox lpick" aria-label="Find a star">
-        <label class="lsearch"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 20 20"/></svg><input id="lq" type="text" placeholder="Search a star or a place in the sky" autocomplete="off" spellcheck="false" aria-label="Search a star or a place in the sky"></label>
+        <label class="lsearch"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 20 20"/></svg><input id="lq" type="text" placeholder="Search a star, galaxy, or coordinates…" autocomplete="off" spellcheck="false" aria-label="Search a star, galaxy, or coordinates"></label>
+        <form id="cform" class="cform" autocomplete="off">
+          <input id="cq" type="text" placeholder="Coordinates, e.g. 269.45 4.69 or 17h57m48s +04d41m36s" spellcheck="false" aria-label="Coordinates (RA, Dec)">
+          <select id="csize" aria-label="Area around the coordinates"><option value="5">5′</option><option value="15" selected>15′</option><option value="30">30′</option><option value="60">1°</option><option value="180">3°</option></select>
+          <button type="submit">Go</button>
+          <p id="cerr" role="alert"></p>
+        </form>
         <ul id="startList"></ul>
       </section>
       <section class="lbox ldata" aria-label="What you are looking at">
         <h2>You are looking at</h2>
         <dl id="liveView">
-          <div><dt>Centre</dt><dd id="lvPos">—</dd></div>
+          <div><dt>Pointer</dt><dd id="lvPos">—</dd></div>
           <div><dt>Field</dt><dd id="lvFov">—</dd></div>
           <div><dt>Galactic</dt><dd id="lvGal">—</dd></div>
           <div><dt>Region</dt><dd id="lvWhere">—</dd></div>
@@ -68,7 +80,7 @@
       <button class="navb" data-page="how" type="button">How it works</button>
       <button class="navb" data-page="data" type="button">Data</button>
       <div id="search">
-        <div id="sfield"><input id="q" type="text" placeholder="Search for an object" autocomplete="off" spellcheck="false" aria-label="Search for an object"></div>
+        <div id="sfield"><input id="q" type="text" placeholder="Search a star, galaxy, or coordinates…" autocomplete="off" spellcheck="false" aria-label="Search a star, galaxy, or coordinates"></div>
         <button id="sbtn" type="button" aria-label="Search" aria-expanded="false">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
             <circle class="lens" cx="10.5" cy="10.5" r="6.2"/><path class="handle" d="M15.2 15.2 20 20"/><path class="x1" d="M6 6 18 18"/><path class="x2" d="M18 6 6 18"/>
@@ -87,18 +99,11 @@
       <button id="cmpBtn" type="button" aria-pressed="true" aria-label="Hide the comparison image" title="Hide the comparison image">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M12 5v14"/></svg>
       </button>
-      <div class="speed" role="group" aria-label="Playback speed">
+      <div class="speed" role="group" aria-label="Playback">
+        <button type="button" id="playBtn" aria-label="Pause" title="Pause to inspect a frame">❚❚</button>
+        <input id="frameSl" type="range" min="0" max="1" step="1" value="0" aria-label="Observation date">
+        <span id="frameDate"></span>
         <button type="button" data-s="0.5">0.5×</button><button type="button" data-s="1" class="on">1×</button><button type="button" data-s="2">2×</button>
-      </div>
-      <div class="proc-mode" role="group" aria-label="Processing mode">
-        <button id="modeSub" type="button" title="Difference image: Subtract comparison to expose shifting motion">Diff</button>
-        <button id="modeStack" type="button" title="Deep temporal sum across all visits">Stack</button>
-        <button id="dlBtn" type="button" title="Download comparison and SPHEREx frames">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-        <button id="shareBtn" type="button" title="Share direct link to coordinates">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-        </button>
       </div></section>
     <section class="panel" id="pDepth" aria-label="3D map of this patch of sky: distance and time">
       <canvas id="depthCv"></canvas><div id="depthTags" aria-hidden="true"></div><canvas id="rulerCv" aria-hidden="true"></canvas>
@@ -108,13 +113,13 @@
     </section>
     <aside class="panel" id="info">
       <div class="head"><h1 class="big" id="iName"></h1><p class="kind" id="iKind"></p></div>
+      <p class="notice" id="iNotice"></p>
       <div class="facts" id="iFacts"></div>
       <p class="coord" id="iCoord"></p>
       <div class="blk"><h3 id="specH">Spectrum</h3><div class="spec" id="iSpec"></div></div>
       <div class="blk"><h3>Brightness over time</h3><div class="lc" id="iLc"></div></div>
       <button id="timeBtn" type="button" title="Every star and galaxy in this patch placed at its real distance, moved back and forward in time">3D map: distance &amp; time</button>
       <div class="blk grow"><h3>In the frame</h3><ul class="objs" id="iObjs"></ul></div>
-      <p class="src" id="iSrc"></p>
     </aside>
   </main>
   <footer id="foot">

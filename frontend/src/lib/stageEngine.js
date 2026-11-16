@@ -352,6 +352,7 @@ async function go(item) {
   for (const id of ["wiseCv", "spxCv"]) { const c = $(id); c.getContext("2d").clearRect(0, 0, c.width, c.height); }   // no leftovers from the last target
   $("spxCv").classList.remove("on");
   busy = true;
+  lastItem = item; showLoad(`Loading ${item.name || "this spot"}…`);
   req = Object.assign({}, item, { nonce: String(Date.now()) + Math.random().toString(36).slice(2, 6) });
   const cmpI = compareFor(item.detector);
   const shift = Math.hypot(item.pmra || 0, item.pmdec || 0) / 1000 * (args.mid - cmpI.epoch);   // arcsec moved since the archive image
@@ -379,7 +380,13 @@ async function go(item) {
   setView("waiting"); tryReveal();
 }
 
-let progInterval = null;
+let progInterval = null, lastItem = null;
+const NOTICE = { barnard: "Watch the ringed star: it sits in a different place in 2010 and 2025. That shift is real motion across the sky.",
+  rdra: "Watch the star's glow rise and fall between visits: R Draconis swells and fades over about eight months.",
+  wise0855: "It is almost invisible in visible light but glows in the infrared: one of the coldest objects ever found outside the Solar System." };
+function showLoad(t, err = false) { $("loadTxt").textContent = t; const b = $("loadBox"); b.classList.add("on"); b.classList.toggle("err", err); }
+function hideLoad() { $("loadBox").classList.remove("on", "err"); }
+$("retryBtn").onclick = () => { hideLoad(); if (lastItem) setTimeout(() => go(lastItem), 400); };
 function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
@@ -418,12 +425,14 @@ const geom = () => {
 async function tryReveal() {
   const res = args.result;
   if (!req || !req.arrived || view === "view" || view === "settling") return;   // never cut the flight short
-  if (args.error) { stopProgressBar(false); toast(args.error); return abortHome(); }
+  if (args.error) { stopProgressBar(false); showLoad(`Couldn't load ${req.name || "this spot"}: ${args.error}`, true); return abortHome(); }
   if (!res || res.nonce !== req.nonce) return;
-  stopProgressBar(true);
+  stopProgressBar(true); hideLoad();
   setView("settling");
   fillPage(res);
-  loadFrames(res);
+  { const n = NOTICE[req.key] || (Math.hypot(res.pmra || 0, res.pmdec || 0) > 300 ? "Compare the ringed positions: the dashed line shows how far this object moved between the two dates." : "Compare the two dates: anything that appears, fades or shifts between the panels has changed.");
+    $("iNotice").textContent = n; }
+  loadFrames(res).then(() => { const s = $("frameSl"); s.max = Math.max(0, imgs.length - 1); });
   const wisePromise = (async () => {
     try {
       const j = req.wiseJob, same = Math.abs(res.field_deg / req.fieldDeg - 1) < 0.02 &&
@@ -451,7 +460,7 @@ async function tryReveal() {
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
   await new Promise(r => setTimeout(r, 500));
   clip.style.visibility = "hidden";
-  setView("view"); startPlayer();
+  setView("view"); startPlayer(); prefetchDepth();   // the 3D map starts loading as soon as the target opens
   syncCmp(res);
   if (res.bands) onBands(res);
   else emit({ type: "bands", nonce: "b" + Date.now(), for: res.nonce, key: req && req.key });
@@ -518,7 +527,6 @@ function fillPage(res) {
   $("iFacts").innerHTML = row;
   const [a, b] = sexa(res.ra, res.dec);
   $("iCoord").textContent = `${a}   ${b}`;
-  $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
   paintLc(res.lc);
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
@@ -623,6 +631,7 @@ function showBand(d) {
   window.addEventListener("resize", placeKnob);
 })();
 function onBands(res) {                             // the other five ranges and the spectra have arrived
+  setTimeout(prefetchDepth, 50);
   last_res = Object.assign(last_res || {}, { bands: res.bands, spectra: res.spectra });
   if (res.lc && res.lc.src) { last_res.lc = res.lc; paintLc(res.lc); }
   else if (last_res.lc && last_res.lc.sat) $("iLc").querySelectorAll(".lcsrc").forEach(e => e.remove());
@@ -760,30 +769,8 @@ function ring(g, x, y, size, a = 0.85) {
 
 /* ---------------------------------------------------------------- SPHEREx player */
 let P = null, imgs = [], playing = true, tpos = 0, dragging = false, raf = 0, last = 0, backdrop = null, tmp = null;
-let procMode = "normal"; // "normal" | "diff" | "stack"
-let stackedCv = null;
-
-function computeStack() {
-  if (!imgs.length) return null;
-  const c = document.createElement("canvas");
-  c.width = imgs[0].naturalWidth || imgs[0].width || 512;
-  c.height = imgs[0].naturalHeight || imgs[0].height || 512;
-  const ctx = c.getContext("2d");
-  const count = imgs.length;
-  ctx.clearRect(0, 0, c.width, c.height);
-  ctx.globalAlpha = 1.0 / count;
-  for (let k = 0; k < count; k++) {
-    ctx.drawImage(imgs[k], 0, 0, c.width, c.height);
-  }
-  ctx.globalAlpha = 1.0;
-  return c;
-}
-
 function loadFrames(res) {
-  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => {
-    imgs = a;
-    stackedCv = computeStack();
-  });
+  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => { imgs = a; });
 }
 function preparePlayer(res) {
   P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curYears = res.years; P.curBase = true;
@@ -807,8 +794,11 @@ let FPS = 5;
 document.querySelectorAll("#pSpx .speed button").forEach(b => b.onclick = () => {
   FPS = 5 * +b.dataset.s; document.querySelectorAll("#pSpx .speed button").forEach(x => x.classList.toggle("on", x === b));
 });
+$("playBtn").onclick = () => { playing = !playing; const b = $("playBtn"); b.textContent = playing ? "❚❚" : "▶"; b.setAttribute("aria-label", playing ? "Pause" : "Play"); b.title = playing ? "Pause to inspect a frame" : "Play"; };
+$("frameSl").addEventListener("input", e => { playing = false; $("playBtn").textContent = "▶"; $("playBtn").setAttribute("aria-label", "Play"); tpos = +e.target.value; drawSpx(); });
+function syncFrameUI() { const n = imgs.length; if (!n || !P) return; const i = Math.floor(tpos) % n, s = $("frameSl"); if (+s.value !== i) s.value = i; const d = (P.curDates || [])[i]; $("frameDate").textContent = d ? String(d).slice(0, 10) : ""; }
 function loop(t) {
-  if (!P) return;
+  if (!P) return; syncFrameUI();
   const dt = Math.max(0, Math.min(0.1, (t - last) / 1000)); last = t;
   if (playing && !dragging) tpos = (tpos + dt * FPS + imgs.length) % imgs.length;
   drawSpx(); raf = requestAnimationFrame(loop);
@@ -819,24 +809,10 @@ function drawSpx() {
   const cw = cv.width, ch = cv.height, S = ch, ox = (cw - S) / 2;
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
   if (backdrop) g.drawImage(backdrop, 0, 0);          // either side of the square field: the sky map, dimmed
-
-  if (procMode === "stack" && stackedCv) {
-    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;
-    g.drawImage(stackedCv, ox, 0, S, S);
-    g.filter = "none";
-  } else {
-    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
-    g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
-    if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
-    g.filter = "none";
-    if (procMode === "diff" && wiseCanvas) {
-      g.save();
-      g.globalCompositeOperation = "difference";
-      g.globalAlpha = 0.85;
-      g.drawImage(wiseCanvas, ox, 0, S, S);
-      g.restore();
-    }
-  }
+  g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
+  g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
+  if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
+  g.filter = "none";
   const Y = P.curYears || P.years, yr = Y ? (j > i ? Y[i] + (Y[j] - Y[i]) * e : Y[i]) : args.mid;
   for (const m of P.movers || []) {           // in every wavelength band: grey = archive position, dotted line, red = now
     const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
@@ -844,79 +820,7 @@ function drawSpx() {
   }
 
   const k = Math.round(tpos) % n, ds = P.curDates || P.dates;
-  const tag = procMode === "diff" ? " · Difference" : procMode === "stack" ? " · Temporal Stack" : "";
-  $("spxCap").textContent = (ds[k % ds.length] || "") + tag;
-}
-
-function initProcControls() {
-  const mSub = $("modeSub"), mStk = $("modeStack"), sBtn = $("shareBtn"), dlBtn = $("dlBtn");
-  if (mSub) {
-    mSub.onclick = () => {
-      procMode = procMode === "diff" ? "normal" : "diff";
-      mSub.classList.toggle("on", procMode === "diff");
-      if (mStk) mStk.classList.remove("on");
-      drawSpx();
-    };
-  }
-  if (mStk) {
-    mStk.onclick = () => {
-      procMode = procMode === "stack" ? "normal" : "stack";
-      mStk.classList.toggle("on", procMode === "stack");
-      if (mSub) mSub.classList.remove("on");
-      drawSpx();
-    };
-  }
-  if (dlBtn) {
-    dlBtn.onclick = () => {
-      if (!last_res) return;
-      const spxCv = $("spxCv");
-      const wiseCv = $("wiseCv");
-      const isSplit = app.classList.contains("split");
-      const name = (last_res.name || "field").replace(/[^a-zA-Z0-9_-]/g, "_");
-      
-      const outCanvas = document.createElement("canvas");
-      if (isSplit && wiseCv && wiseCv.width > 0) {
-        outCanvas.width = wiseCv.width + spxCv.width;
-        outCanvas.height = Math.max(wiseCv.height, spxCv.height);
-        const ctx = outCanvas.getContext("2d");
-        ctx.fillStyle = "#0d0f12";
-        ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
-        ctx.drawImage(wiseCv, 0, 0);
-        ctx.drawImage(spxCv, wiseCv.width, 0);
-      } else {
-        outCanvas.width = spxCv.width;
-        outCanvas.height = spxCv.height;
-        const ctx = outCanvas.getContext("2d");
-        ctx.drawImage(spxCv, 0, 0);
-      }
-      
-      outCanvas.toBlob(blob => {
-        if (!blob) return;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `draconid_drift_${name}_${procMode}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        toast("Image downloaded");
-      }, "image/png");
-    };
-  }
-  if (sBtn) {
-    sBtn.onclick = () => {
-      if (!last_res) return;
-      const url = new URL(window.location.href);
-      url.searchParams.set("ra", Number(last_res.ra).toFixed(4));
-      url.searchParams.set("dec", Number(last_res.dec).toFixed(4));
-      url.searchParams.set("fov", Math.round(last_res.field_deg * 3600));
-      navigator.clipboard?.writeText(url.toString()).then(() => {
-        toast("Direct coordinate link copied to clipboard!");
-      }).catch(() => {
-        toast(`Link: ?ra=${last_res.ra.toFixed(4)}&dec=${last_res.dec.toFixed(4)}`);
-      });
-    };
-  }
+  $("spxCap").textContent = ds[k % ds.length] || "";
 }
 /* before / after: the archive panel sits beside SPHEREx by default; the button hides or shows it */
 app.classList.add("split");
@@ -1327,6 +1231,13 @@ function fillStarts() {
   });
 }
 fillStarts(); setInterval(fillStarts, 500);
+$("cform").addEventListener("submit", e => {
+  e.preventDefault(); const q = $("cq").value.trim(), it = q && parseCoords(q), err = $("cerr");
+  if (!it) { err.textContent = "Type RA and Dec in degrees (269.45 4.69) or as 17h57m48s +04d41m36s."; return; }
+  err.textContent = ""; const amin = +$("csize").value;
+  leaveLanding(); go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { key: "custom", kind: "Patch of sky", fov: Math.min(18000, amin * 60) }));
+});
+document.querySelectorAll(".lquick button").forEach(b => b.onclick = () => { const p = presetItems().find(x => x.key === b.dataset.key); if (p) { leaveLanding(); choose(p); } });
 // the home list's search box drives the same search as the bar's: type here, results drop from the bar
 {
   const lq = $("lq");
@@ -1347,8 +1258,8 @@ $("demoBtn").onclick = () => {                      // the film, full screen; wh
   };
   box.classList.add("on"); v.currentTime = 0;
   v.play().catch(() => finish(false));                // cannot play (no video support): go straight to the site
-  v.onended = () => finish(true); $("demoSkip").onclick = () => finish(false);
-  window.addEventListener("keydown", function k(e) { if (e.key === "Escape") { window.removeEventListener("keydown", k); finish(false); } });
+  v.onended = () => finish(true); $("demoSkip").onclick = e => { e.stopPropagation(); finish(true); };   // skip the film only: the tour still runs
+  window.addEventListener("keydown", function k(e) { if (e.key === "Escape") { window.removeEventListener("keydown", k); finish(true); } });
 };
 $("exploreBtn").onclick = () => enterSide();
 
@@ -1410,7 +1321,17 @@ function setMap(k) {
   curMap = k;
 }
 document.querySelectorAll("#land .wl button").forEach(b => b.onclick = () => setMap(b.dataset.map));
-const zoomBy = k => { wake(); const f0 = sky.fov(), f1 = Math.min(sky.homeFov(), Math.max(0.02, f0 * k)); tween(450, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); };
+let zTarget = null, zRaf = 0;
+const zoomBy = k => {
+  wake(); cancelAnimationFrame(zRaf);
+  const f0 = sky.fov(), H = sky.homeFov(), want = Math.max(0.02, (zTarget || f0) * k);
+  if (k > 1 && want >= H * 0.6) { zTarget = null; const c = sky.center(); flyHome(c[0], c[1] * 0.5, H, 900).then(() => fitBlend()); return; }   // out past half the sky: settle on the whole globe, never stuck part-way
+  const f1 = Math.min(H, want); zTarget = f1;
+  const t0 = performance.now();
+  const step = now => { const t = Math.min(1, (now - t0) / 450); sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend();
+    if (t < 1) zRaf = requestAnimationFrame(step); else zTarget = null; };
+  zRaf = requestAnimationFrame(step);
+};
 $("zIn").onclick = () => zoomBy(0.5); $("zOut").onclick = () => zoomBy(2);
 $("zHome").onclick = () => { wake(); const c = sky.center(); flyHome(c[0], 0, sky.homeFov(), 1200).then(() => { fitBlend(); }); };
 
@@ -1426,21 +1347,27 @@ function galactic(ra, dec) {
 }
 const MAPNAME = { dss: "Visible light (DSS)", tmass: "Near-infrared (2MASS)", wise: "Mid-infrared (AllWISE)" };
 function fovTxt(f) { return f >= 2 ? `${f.toFixed(f >= 20 ? 0 : 1)}° across` : f >= 1 / 30 ? `${(f * 60).toFixed(1)}′ across` : `${(f * 3600).toFixed(0)}″ across`; }
-let lastLive = "";
+let lastLive = "", ptr = null;
+document.addEventListener("mousemove", e => {
+  if (!SIDE || view !== "home" || !sky.a) { ptr = null; return; }
+  const r = sky.el.getBoundingClientRect();
+  if (!r || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom || e.target.closest(".lside,.lctrl,#bar")) { ptr = null; return; }
+  const w = sky.pix2world(e.clientX - r.left, e.clientY - r.top); ptr = w ? [((w[0] % 360) + 360) % 360, w[1]] : null;
+}, { passive: true });
 function updateLive() {
   if (!SIDE || view !== "home" || !sky.a) return;
-  const f = sky.fov(), c = sky.center(), whole = f > 150;
+  const f = sky.fov(), c = ptr || sky.center(), whole = f > 150 && !ptr;
   const [l, b] = galactic(c[0], c[1]), [sa, sd] = sexa(c[0], c[1]);
   const where = whole ? "The whole sky" : Math.abs(b) < 5 ? "In the plane of the Milky Way: crowded with stars and dust"
     : Math.abs(b) < 20 ? "Near the Milky Way" : Math.abs(b) > 60 ? "Far from the Milky Way: mostly distant galaxies" : "Away from the Milky Way";
-  const key = [whole, sa, sd, f.toFixed(3), curMap].join("|"); if (key === lastLive) return; lastLive = key;
+  const key = [whole, sa, sd, f.toFixed(3), curMap, !!ptr].join("|"); if (key === lastLive) return; lastLive = key;
   $("lvPos").textContent = whole ? "Whole sky" : `${sa}  ${sd}`;
   $("lvFov").textContent = whole ? "360° × 180°" : fovTxt(f);
   $("lvGal").textContent = whole ? "—" : `l ${l.toFixed(1)}°, b ${b >= 0 ? "+" : "−"}${Math.abs(b).toFixed(1)}°`;
   $("lvWhere").textContent = where;
   $("lvMap").textContent = MAPNAME[curMap] || "";
 }
-setInterval(updateLive, 250);
+setInterval(updateLive, 80);
 
 /* ---------------------------------------------------------------- the guided tour */
 // Runs after the demo film (or from Tour in the top bar): opens WISE 0855-0714 and walks through every feature.
@@ -1500,7 +1427,7 @@ async function startTour() {
   closeAbout(); closeSearch(true);
   if (view !== "home") { await leave(); await waitFor(() => view === "home", 8000); }
   enterSide(); await sleep(900);
-  const steps = 9; let n = 0; const N = () => `${++n} / ${steps}`;
+  const steps = 8; let n = 0; const N = () => `${++n} / ${steps}`;
   const S = q => document.querySelector(q);
   await waitFor(() => S("#startList li"), 6000);
   const btn = [...document.querySelectorAll("#startList button")].find(b => /Barnard/.test(b.textContent)) || S("#startList button");
@@ -1525,26 +1452,27 @@ async function startTour() {
   if (!await say("<b>Discoveries.</b> Everything the pipeline caught moving.", db, N(), "Show me")) return;
   await fakeClick(db); await sleep(600);
   if (!await say("Click any row to fly there.", S("#dlist"), N())) return;
-  const dt = S('#bar .navb[data-page="data"]');
-  await fakeClick(dt); await sleep(600);
-  if (!await say("<b>Data.</b> Where every number comes from.", S('#about .pg[data-page="data"]'), N())) return;
   closeAbout();
   say("Back to the sky…", null, "", "");
   if (app.classList.contains("deep")) exitDepth();
   await leave(); await waitFor(() => view === "home", 8000); await sleep(1300);
-  if (!await say("<b>You are looking at</b> updates as you move around. Your turn.", S("#land .ldata"), `${steps} / ${steps}`, "Finish")) return;
+  if (!await say("<b>Your turn.</b> Pick a shortcut, search a name, or type coordinates.", S("#land .lpick"), `${steps} / ${steps}`, "Finish")) return;
   endTour();
 }
 window.addEventListener("resize", () => { if (touring && tourStep) hlEl.classList.remove("on"); });
 
 /* ---------------------------------------------------------------- past & future: the 3D depth view */
-let depthOpen = false;
+let depthOpen = false, depthAsked = null;
+function prefetchDepth() {                           // start the 3D map in the background, so it opens at once
+  if (!last_res || last_res.depth || depthAsked === last_res.nonce) return;
+  depthAsked = last_res.nonce; emit({ type: "depth", nonce: "d" + Date.now(), for: last_res.nonce });
+}
 function enterDepth() {
   if (!last_res) return;
   app.classList.add("deep"); $("timeBtn").textContent = "Back to images"; $("timeBtn").setAttribute("aria-pressed", "true");
   $("tslider").value = 0; $("tLab").innerHTML = depth.timeLabel(0); buildTicks();
   if (last_res.depth) showDepth(last_res);
-  else { $("depthWait").classList.add("on"); emit({ type: "depth", nonce: "d" + Date.now(), for: last_res.nonce }); }
+  else { $("depthWait").classList.add("on"); if (depthAsked !== last_res.nonce) { depthAsked = last_res.nonce; emit({ type: "depth", nonce: "d" + Date.now(), for: last_res.nonce }); } }
 }
 function exitDepth() {
   app.classList.remove("deep"); depth.close(); depthOpen = false;
@@ -1574,6 +1502,7 @@ $("tslider").addEventListener("input", e => { const t = depth.sliderYears(+e.tar
 
 function onArgs() {
   if (args.result) leaveLanding();
+  if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.depth && !last_res.depth) last_res.depth = args.result.depth;
   if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.depth && !depthOpen && app.classList.contains("deep")) showDepth(args.result);
   if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.bands && !last_res.bands) onBands(args.result);
   tryReveal();
@@ -1584,7 +1513,6 @@ function onArgs() {
     if (init.presets) args.presets = init.presets;
     if (init.mid) args.mid = init.mid;
   } catch (e) {}
-  initProcControls();
   await boot();
   const qp = new URLSearchParams(window.location.search);
   if (qp.has("ra") && qp.has("dec")) {

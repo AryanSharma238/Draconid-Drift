@@ -233,7 +233,7 @@ function bindSky() {
  clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  // Right-click drag: draw a smooth circular selection area where the anchor point is the top-left of the circle
+  // Right-click drag: draw a curved-corner rectangle selection
   let sel = null;
   const stop = e => { e.stopPropagation(); e.preventDefault(); };
   const begin = e => {
@@ -241,20 +241,19 @@ function bindSky() {
     stop(e); if (!homeOk() || sel) return;
     wake(); const r = rect();
     const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
-    sel = { x0, y0, cx: x0, cy: y0, r: 0 };
-    drawSel(); selEl.classList.remove("fading"); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
+    sel = { x0, y0, x: x0, y: y0, w: 0, h: 0 };
+    drawSel(); selEl.classList.remove("fading", "snapping"); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
   };
   clip.addEventListener("pointerdown", begin, true);
   clip.addEventListener("mousedown", e => { if (e.button === 2) stop(e); }, true);
 
   const drawSel = () => {
     if (!sel) return;
-    const d = Math.round(sel.r * 2);
     Object.assign(selEl.style, {
-      left: `${sel.cx}px`,
-      top: `${sel.cy}px`,
-      width: `${d}px`,
-      height: `${d}px`
+      left: `${Math.round(sel.x)}px`,
+      top: `${Math.round(sel.y)}px`,
+      width: `${Math.round(sel.w)}px`,
+      height: `${Math.round(sel.h)}px`
     });
   };
 
@@ -262,16 +261,14 @@ function bindSky() {
     if (!sel) return; stop(e);
     const r = rect();
     const currX = e.clientX - r.left, currY = e.clientY - r.top;
-    const dx = currX - sel.x0, dy = currY - sel.y0;
-    const sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
-    // Sensitive direct tracking: matches drag displacement naturally
-    const rawDist = Math.max(Math.abs(dx), Math.abs(dy));
-    const D = Math.max(16, Math.min(Math.min(sky.W, sky.H) * 0.9, rawDist * 1.15));
-    const xLeft = sx > 0 ? sel.x0 : sel.x0 - D;
-    const yTop = sy > 0 ? sel.y0 : sel.y0 - D;
-    sel.cx = xLeft + D / 2;
-    sel.cy = yTop + D / 2;
-    sel.r = D / 2;
+    const x = Math.min(sel.x0, currX);
+    const y = Math.min(sel.y0, currY);
+    const w = Math.max(8, Math.abs(currX - sel.x0));
+    const h = Math.max(8, Math.abs(currY - sel.y0));
+    sel.x = x;
+    sel.y = y;
+    sel.w = w;
+    sel.h = h;
     drawSel();
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
@@ -279,26 +276,27 @@ function bindSky() {
   window.addEventListener("pointerup", async e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
-    if (s0.r < 14) { selEl.classList.remove("on"); return; }
-    const cx = s0.cx, cy = s0.cy, rad = s0.r;
+    if (s0.w < 12 || s0.h < 12) { selEl.classList.remove("on"); return; }
+    const x = s0.x, y = s0.y, w = s0.w, h = s0.h;
+    const cx = x + w / 2, cy = y + h / 2;
 
     const c = sky.pix2world(cx, cy);
-    const topPt = sky.pix2world(cx, cy - rad);
-    const botPt = sky.pix2world(cx, cy + rad);
-    if (!c || !topPt || !botPt) { selEl.classList.remove("on"); return toast("Keep the selection circle inside the map."); }
+    const topPt = sky.pix2world(cx, y);
+    const botPt = sky.pix2world(cx, y + h);
+    if (!c || !topPt || !botPt) { selEl.classList.remove("on"); return toast("Keep the selection rectangle inside the map."); }
 
-    // Diameter of selected circular region on the sky in arcseconds
+    // Height of selected rectangular region on the sky in arcseconds
     const side = sepDeg(topPt, botPt) * 3600;
-    if (side > 7200) { selEl.classList.remove("on"); return toast(`That circle is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° across. Scroll to zoom in and pick up to 2°.`); }
+    if (side > 7200) { selEl.classList.remove("on"); return toast(`That rectangle is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° across. Scroll to zoom in and pick up to 2°.`); }
 
-    // Default target: exact middle of the circle
+    // Default target: exact middle of the rectangle
     let targetRa = c[0], targetDec = c[1];
     let starFound = false;
-    let targetName = `Selected Region (${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°)`;
+    let targetName = `${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
 
     const degRadius = Math.max(side / 7200, 0.005);
     
-    // 1) First check known catalog objects within the circular region
+    // 1) First check known catalog objects within the rectangular region
     const allPresets = presetItems();
     const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
     let bestObj = null, bestDist = degRadius;
@@ -316,7 +314,7 @@ function bindSky() {
       starFound = true;
     }
 
-    // 2) If not in catalog, sample the 2MASS cutout to find the brightest star/source inside the circle
+    // 2) If not in catalog, sample the 2MASS cutout to find the brightest star/source inside the rectangle
     if (!starFound) {
       try {
         const sw = 48, sh = 48;
@@ -326,8 +324,6 @@ function bindSky() {
         let totalFlux = 0, fluxX = 0, fluxY = 0;
         for (let py = 0; py < sh; py++) {
           for (let px = 0; px < sw; px++) {
-            const ndx = px - sw / 2, ndy = py - sh / 2;
-            if (Math.hypot(ndx, ndy) > sw / 2) continue;
             const idx = (py * sw + px) * 4;
             const b = data[idx] + data[idx + 1] + data[idx + 2];
             if (b > maxB) { maxB = b; bestX = px; bestY = py; }
@@ -342,27 +338,27 @@ function bindSky() {
           const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
           targetRa = ((c[0] + dRa) % 360 + 360) % 360;
           targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-          targetName = `Selected Target (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
+          targetName = `${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°`;
           starFound = true;
         }
       } catch (e) {}
     }
 
-    // 3) Match the selection circle towards the exact center of the identified star!
+    // 3) Match the selection rectangle towards the exact center of the star it identifies
     if (starFound) {
       const starPix = sky.world2pix(targetRa, targetDec);
       if (starPix && Number.isFinite(starPix[0]) && Number.isFinite(starPix[1])) {
         selEl.classList.add("snapping");
-        selEl.style.left = `${Math.round(starPix[0])}px`;
-        selEl.style.top = `${Math.round(starPix[1])}px`;
+        selEl.style.left = `${Math.round(starPix[0] - w / 2)}px`;
+        selEl.style.top = `${Math.round(starPix[1] - h / 2)}px`;
       }
     }
-    // If no star, it points to the exact middle of the circle (c[0], c[1])
+    // If no star, it points to the exact middle of the rectangle (c[0], c[1])
 
     setTimeout(() => {
       selEl.classList.remove("snapping");
       selEl.classList.add("fading");
-      setTimeout(() => { selEl.classList.remove("on", "fading"); }, 850);
+      setTimeout(() => { selEl.classList.remove("on", "fading"); }, 650);
     }, starFound ? 300 : 100);
 
     go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
@@ -438,15 +434,8 @@ function updateLockAndWarp(ra, dec, t, label) {
 
     const lab = beaconEl.querySelector(".lock-label");
     if (lab) {
-      // Dynamic readout: show identification status
-      let text = label || "Acquiring Coordinates...";
-      if (t < 0.35) {
-        lab.textContent = `TARGETING: ${text}`;
-      } else if (t < 0.75) {
-        lab.textContent = `LOCKED: ${text}`;
-      } else {
-        lab.textContent = text;
-      }
+      // Display clean coordinates or name in plain yellow, no "LOCKED", no "TARGETING", no gradients
+      lab.textContent = label || `${ra.toFixed(2)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(2)}°`;
     }
   }
 }
@@ -561,9 +550,9 @@ async function go(item) {
   await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000, targetLabel);
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
 
-  // After arriving and locking on, showcase the star / nebula / patch of space in high resolution for a full 3 seconds
-  // while SPHEREx and archival data are prepared
-  await new Promise(r => setTimeout(r, 3000));
+  // After arriving and locking on, showcase the star / nebula / patch of space in clean high resolution for 2 seconds
+  // before the analytical data panels slide in
+  await new Promise(r => setTimeout(r, 2000));
 
   setView("waiting"); tryReveal();
 }
@@ -576,7 +565,7 @@ function startProgressBar() {
   bar.style.width = "0%";
   let progress = 0;
   const startT = performance.now();
-  const duration = 5800;  // smoothly spans the 3s pan + 3s high-resolution star showcase
+  const duration = 4800;  // smoothly spans the 3s pan + 2s high-resolution star showcase
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
@@ -668,9 +657,18 @@ async function leave(fromError = false) {
   if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .6s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 650); }
   setView("flying");
   const c = sky.center();
-  // Cinematic 2.4s pull-back and zoom out with graceful galactic deceleration
-  await flyHome(c[0], 0, sky.homeFov(), 2400);
+  // Cinematic 3.0s whoosh pull-back through the stars to the whole celestial sphere
+  await flyHome(c[0], 0, sky.homeFov(), 3000);
   clearLockAndWarp();
+  if (window.history && window.history.replaceState) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("ra");
+    url.searchParams.delete("dec");
+    url.searchParams.delete("fov");
+    url.searchParams.delete("name");
+    url.searchParams.delete("target");
+    window.history.replaceState(null, "", url.pathname);
+  }
   setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
 // the three panels fold back into the full-screen sky (reverse of the reveal)
@@ -725,6 +723,14 @@ function fillPage(res) {
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
   drawSpectrum(); buildWave(res);
+  if (window.history && window.history.replaceState) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("ra", Number(res.ra).toFixed(4));
+    url.searchParams.set("dec", Number(res.dec).toFixed(4));
+    url.searchParams.set("fov", Math.round(res.field_deg * 3600));
+    if (res.name && !res.name.startsWith("Selected")) url.searchParams.set("name", res.name);
+    window.history.replaceState(null, "", url.toString());
+  }
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
@@ -1042,7 +1048,7 @@ function drawSpx() {
 }
 
 function initProcControls() {
-  const mSub = $("modeSub"), mStk = $("modeStack"), sBtn = $("shareBtn");
+  const mSub = $("modeSub"), mStk = $("modeStack"), sBtn = $("shareBtn"), dlBtn = $("dlBtn");
   if (mSub) {
     mSub.onclick = () => {
       procMode = procMode === "diff" ? "normal" : "diff";
@@ -1057,6 +1063,43 @@ function initProcControls() {
       mStk.classList.toggle("on", procMode === "stack");
       if (mSub) mSub.classList.remove("on");
       drawSpx();
+    };
+  }
+  if (dlBtn) {
+    dlBtn.onclick = () => {
+      if (!last_res) return;
+      const spxCv = $("spxCv");
+      const wiseCv = $("wiseCv");
+      const isSplit = app.classList.contains("split");
+      const name = (last_res.name || "field").replace(/[^a-zA-Z0-9_-]/g, "_");
+      
+      const outCanvas = document.createElement("canvas");
+      if (isSplit && wiseCv && wiseCv.width > 0) {
+        outCanvas.width = wiseCv.width + spxCv.width;
+        outCanvas.height = Math.max(wiseCv.height, spxCv.height);
+        const ctx = outCanvas.getContext("2d");
+        ctx.fillStyle = "#0d0f12";
+        ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+        ctx.drawImage(wiseCv, 0, 0);
+        ctx.drawImage(spxCv, wiseCv.width, 0);
+      } else {
+        outCanvas.width = spxCv.width;
+        outCanvas.height = spxCv.height;
+        const ctx = outCanvas.getContext("2d");
+        ctx.drawImage(spxCv, 0, 0);
+      }
+      
+      outCanvas.toBlob(blob => {
+        if (!blob) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `draconid_drift_${name}_${procMode}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toast("Image downloaded");
+      }, "image/png");
     };
   }
   if (sBtn) {
@@ -1104,25 +1147,25 @@ window.addEventListener("keydown", e => {
 /* ---------------------------------------------------------------- search */
 const CORE_PRESETS = [
   // NASA Space Apps Challenge Targets
-  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "High proper-motion red dwarf (10.3″/yr)" },
-  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Cold brown dwarf binary companion" },
-  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Coldest known brown dwarf (8.1″/yr)" },
-  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Young variable star with dimming disk" },
-  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Mira pulsating variable red giant" },
-  // Fast-Moving Stars
-  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)" },
-  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary star system (5.3″/yr)" },
-  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)" },
-  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
+  { group: "Moving Stars (NASA Challenge)", key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "High proper-motion red dwarf (10.3″/yr)" },
+  { group: "Moving Stars (NASA Challenge)", key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Cold brown dwarf binary companion" },
+  { group: "Moving Stars (NASA Challenge)", key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Coldest known brown dwarf (8.1″/yr)" },
+  { group: "Moving Stars (NASA Challenge)", key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Young variable star with dimming disk" },
+  { group: "Moving Stars (NASA Challenge)", key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Mira pulsating variable red giant" },
+  // Fast Movers
+  { group: "Fast Movers", key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)" },
+  { group: "Fast Movers", key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary star system (5.3″/yr)" },
+  { group: "Fast Movers", key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)" },
+  { group: "Fast Movers", key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
   // Notable Sky Targets
-  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
-  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system to the Sun", fov: 450 },
-  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
-  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant star in Orion", fov: 400 },
-  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard photometric calibrator star", fov: 350 },
-  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Seven Sisters open star cluster (M45)", fov: 1200 },
-  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
-  { key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 }
+  { group: "Notable Sky Targets", key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
+  { group: "Notable Sky Targets", key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system to the Sun", fov: 450 },
+  { group: "Notable Sky Targets", key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
+  { group: "Notable Sky Targets", key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant star in Orion", fov: 400 },
+  { group: "Notable Sky Targets", key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard photometric calibrator star", fov: 350 },
+  { group: "Notable Sky Targets", key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Seven Sisters open star cluster (M45)", fov: 1200 },
+  { group: "Notable Sky Targets", key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
+  { group: "Notable Sky Targets", key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 }
 ];
 
 const sEl = $("search"), qEl = $("q"), listEl = $("results"), sbtn = $("sbtn");
@@ -1143,7 +1186,10 @@ sbtn.onclick = () => (sEl.classList.contains("open") ? closeSearch() : openSearc
 $("veil").onclick = () => closeSearch();
 const presetItems = () => {
   if (args.presets && args.presets.length) {
-    const combined = [...args.presets.map(p => Object.assign({}, p, { kind: KINDS[p.key] || p.kind || "" }))];
+    const combined = [...args.presets.map(p => Object.assign({}, p, {
+      group: "Moving Stars (NASA Challenge)",
+      kind: KINDS[p.key] || p.kind || ""
+    }))];
     const seen = new Set(combined.map(c => c.name.toLowerCase()));
     for (const p of CORE_PRESETS) {
       if (!seen.has(p.name.toLowerCase())) { combined.push(p); seen.add(p.name.toLowerCase()); }
@@ -1162,7 +1208,15 @@ function showItems(list) {
     listEl.appendChild(li);
     return;
   }
+  let lastGroup = "";
   items.forEach((it, i) => {
+    if (it.group && it.group !== lastGroup) {
+      lastGroup = it.group;
+      const hdr = document.createElement("li");
+      hdr.className = "hdr";
+      hdr.textContent = it.group;
+      listEl.appendChild(hdr);
+    }
     const li = document.createElement("li"); li.setAttribute("role", "option");
     li.innerHTML = `<div class="th"></div><div><div class="nm"></div><div class="kd"></div></div>`;
     li.querySelector(".nm").textContent = it.name; li.querySelector(".kd").textContent = it.kind || "";
@@ -1170,7 +1224,11 @@ function showItems(list) {
     listEl.appendChild(li); thumb(it, li.querySelector(".th"));
   });
 }
-function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
+function mark(i) {
+  sel = i;
+  const options = listEl.querySelectorAll("li[role=option]");
+  options.forEach((c, j) => c.classList.toggle("on", j === i));
+}
 function choose(it) {
   const fov = it.key !== "custom" ? it.fov : Math.min(7200, Math.max(300, 1.3 * 60 * (it.size || 0)));
   go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { fov: fov || 300 }));
@@ -1199,7 +1257,12 @@ qEl.addEventListener("input", () => {
   clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
   if (!q) return showItems(presetItems());
   const qLower = q.toLowerCase();
-  const local = presetItems().filter(p => p.name.toLowerCase().includes(qLower) || (p.kind && p.kind.toLowerCase().includes(qLower))).concat(famous(q));
+  const all = presetItems();
+  const local = all.filter(p =>
+    p.name.toLowerCase().includes(qLower) ||
+    (p.kind && p.kind.toLowerCase().includes(qLower)) ||
+    (p.key && p.key.toLowerCase().includes(qLower))
+  ).concat(famous(q));
   const num = parseCoords(q); const first = num ? [num] : local;
   showItems(first);
   if (!num && q.length >= 2) deb = setTimeout(() => remote(q, my, first), 260);
@@ -1402,13 +1465,24 @@ function onArgs() {
   } catch (e) {}
   await boot();
   const qp = new URLSearchParams(window.location.search);
+  let initTarget = null;
   if (qp.has("ra") && qp.has("dec")) {
     const ra = parseFloat(qp.get("ra")), dec = parseFloat(qp.get("dec"));
-    const fov = parseFloat(qp.get("fov") || "180");
+    const fov = parseFloat(qp.get("fov") || "300");
+    const name = qp.get("name") || `${ra.toFixed(2)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(2)}°`;
     if (Number.isFinite(ra) && Number.isFinite(dec)) {
-      leaveLanding();
-      go({ key: "custom", name: "Linked location", ra, dec, pmra: 0, pmdec: 0, epoch: args.mid, fov, detector: "SPHEREx-D3" });
+      initTarget = { key: "custom", name, ra, dec, pmra: 0, pmdec: 0, epoch: args.mid, fov, detector: "SPHEREx-D3" };
     }
+  } else if (qp.has("target") || qp.has("preset") || qp.has("name")) {
+    const query = (qp.get("target") || qp.get("preset") || qp.get("name")).toLowerCase();
+    const match = presetItems().find(p => p.key === query || p.name.toLowerCase() === query);
+    if (match) {
+      initTarget = Object.assign({}, match, { epoch: 2000, pmra: match.pmra || 0, pmdec: match.pmdec || 0, detector: match.detector || "SPHEREx-D3" });
+    }
+  }
+  if (initTarget) {
+    leaveLanding();
+    go(initTarget);
   }
 })();
 }

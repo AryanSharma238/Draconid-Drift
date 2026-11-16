@@ -27,7 +27,8 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 
 /* ---------- top bar ---------- */
 #bar{position:absolute;left:clamp(14px,2vw,28px);right:clamp(14px,2vw,28px);top:16px;height:58px;padding:0 10px 0 24px;display:flex;align-items:center;justify-content:space-between;z-index:30;border-radius:22px;background:#7A4A51;color:rgba(255,255,255,.8);box-shadow:0 10px 30px rgba(0,0,0,.25);transition:opacity .45s ease}
-#brand{font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:.005em;padding:8px 0}
+#brand{font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:.005em;padding:8px 0;display:flex;align-items:center;gap:10px}
+#brand img{border-radius:6px;display:block}
 nav{display:flex;align-items:center;gap:6px}
 #bar .navb{font-size:15px;padding:10px 14px;color:rgba(255,255,255,.72);transition:color .2s}
 #bar .navb:hover,#bar .navb.on{color:#fff}
@@ -226,16 +227,18 @@ body{font-size:15px}
 @media (max-width:760px){#bar .navb[data-page="how"],#bar .navb[data-page="data"]{display:none}}
 
 /* landing: title over the spinning sky */
-#land{position:absolute;inset:0;z-index:35;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;padding:24px;
-  background:radial-gradient(ellipse at center,rgba(19,22,26,.55),rgba(19,22,26,.15) 60%,transparent);transition:opacity .8s ease}
-#land h1{font-size:clamp(44px,8vw,112px);font-weight:800;letter-spacing:-.02em;line-height:1;color:#fff}
-#land p{font-size:clamp(16px,1.6vw,21px);color:rgba(255,255,255,.86);max-width:36ch}
-#land .cta{display:flex;gap:14px;margin-top:14px}
-#land button{font:600 17px/1 var(--display,inherit);padding:16px 34px;border-radius:999px;cursor:pointer;transition:background .2s,color .2s,transform .2s}
-#demoBtn{background:#7A4A51;color:#fff;border:2px solid #7A4A51}
-#demoBtn:hover{background:#8d5760;border-color:#8d5760}
-#exploreBtn{background:transparent;color:#fff;border:2px solid #b07a83}
-#exploreBtn:hover{background:rgba(122,74,81,.25)}
+#land{position:absolute;inset:0;z-index:35;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:clamp(40px,8vh,80px) 24px;
+  background:radial-gradient(ellipse at center,rgba(19,22,26,.65),rgba(19,22,26,.2) 65%,transparent);transition:opacity .8s ease;pointer-events:none}
+#land .lhero{display:flex;flex-direction:column;align-items:center;pointer-events:auto;max-width:860px}
+#land .brand{margin:0 0 16px;font-size:clamp(16px,1.5vw,20px);font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#e8be8c}
+#land h1{font-size:clamp(44px,6.8vw,96px);font-weight:800;letter-spacing:-.03em;line-height:1.02;color:#fff;margin:0 0 20px;text-wrap:balance}
+#land .sub{font-size:clamp(16px,1.4vw,20px);line-height:1.55;color:rgba(255,255,255,.88);max-width:54ch;margin:0 auto}
+#land .cta{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:36px}
+#land button{font:600 16.5px/1 var(--display,inherit);padding:16px 36px;border-radius:999px;cursor:pointer;transition:background .2s,transform .2s,box-shadow .2s;letter-spacing:.01em}
+#exploreBtn{background:#7A4A51;color:#fff;border:2px solid #7A4A51;box-shadow:0 8px 24px rgba(122,74,81,.45)}
+#exploreBtn:hover{background:#8d5760;border-color:#8d5760;transform:translateY(-2px);box-shadow:0 12px 28px rgba(122,74,81,.6)}
+#demoBtn{background:rgba(255,255,255,.08);color:#fff;border:2px solid rgba(255,255,255,.28);backdrop-filter:blur(10px)}
+#demoBtn:hover{background:rgba(255,255,255,.16);border-color:#fff;transform:translateY(-2px)}
 #land button:focus-visible{outline:2px solid #fff;outline-offset:3px}
 #app.landing #bar{z-index:40}
 #app:not(.landing) #land{opacity:0;pointer-events:none}
@@ -322,12 +325,6 @@ body{font-size:15px}
 #info .spec svg{width:100%;height:110px;flex:none;display:block}
 #info .spec .specnote{position:static;margin-top:6px;font-size:12px;line-height:1.35;color:var(--dim)}
 
-#land{gap:0}
-#land h1{font-size:clamp(40px,6.2vw,92px);font-weight:800;letter-spacing:-.025em;line-height:1.02;max-width:14ch}
-#land .brand{margin-top:28px;font-size:clamp(17px,1.5vw,21px);font-weight:700;letter-spacing:.01em;color:#c99aa2}
-#land .sub{margin-top:6px;font-size:clamp(16px,1.4vw,20px);color:rgba(255,255,255,.82)}
-#land .cta{margin-top:30px}
-#land .sub{max-width:none;white-space:nowrap}
 
 #cmpBtn{position:absolute;top:20px;right:20px;z-index:3;width:40px;height:40px;padding:0;display:grid;place-items:center;border-radius:12px}
 #cmpBtn[aria-pressed=true] svg path{stroke:#fff}

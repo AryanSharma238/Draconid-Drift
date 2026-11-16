@@ -2,6 +2,7 @@ import { Sky, unit, radec, slerp, MAP_URL } from "./sky.js";
 import { renderCutout, SURVEYS } from "./healpix.js";
 import * as intro from "./intro.js";
 import * as depth from "./depth.js";
+import { CN, CR } from "./const.js";
 
 export function mountStage() {
 
@@ -180,12 +181,13 @@ function bindSky() {
   let wt = 0;
   clip.addEventListener("wheel", e => {
     if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); wake();
-    const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+    const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY));   // trackpad pinches send big bursts: cap each step
     const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
     const r = rect(), before = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY);
     sky.a.setFoV(f); fitBlend();
     const after = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY), c = sky.center();
-    if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
+    if (dy > 0 && f > 60) { const c0 = sky.center(); sky.a.gotoRaDec(c0[0], c0[1] * (f >= sky.homeFov() * 0.98 ? 0 : 0.85)); }   // zooming out wide: ease back to a centred globe
+    else if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
  clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 300); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
@@ -431,7 +433,7 @@ async function tryReveal() {
   setView("settling");
   fillPage(res);
   { const n = NOTICE[req.key] || (Math.hypot(res.pmra || 0, res.pmdec || 0) > 300 ? "Compare the ringed positions: the dashed line shows how far this object moved between the two dates." : "Compare the two dates: anything that appears, fades or shifts between the panels has changed.");
-    $("iNotice").textContent = n; }
+    const ne = $("iNotice"); if (ne) ne.textContent = n; }
   loadFrames(res).then(() => { const s = $("frameSl"); s.max = Math.max(0, imgs.length - 1); });
   const wisePromise = (async () => {
     try {
@@ -1232,7 +1234,7 @@ function fillStarts() {
 }
 fillStarts(); setInterval(fillStarts, 500);
 $("cform").addEventListener("submit", e => {
-  e.preventDefault(); const q = $("cq").value.trim(), it = q && parseCoords(q), err = $("cerr");
+  e.preventDefault(); const q = `${$("cra").value.trim()} ${$("cdec").value.trim()}`.trim(), it = q && parseCoords(q), err = $("cerr");
   if (!it) { err.textContent = "Type RA and Dec in degrees (269.45 4.69) or as 17h57m48s +04d41m36s."; return; }
   err.textContent = ""; const amin = +$("csize").value;
   leaveLanding(); go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { key: "custom", kind: "Patch of sky", fov: Math.min(18000, amin * 60) }));
@@ -1336,6 +1338,8 @@ $("zIn").onclick = () => zoomBy(0.5); $("zOut").onclick = () => zoomBy(2);
 $("zHome").onclick = () => { wake(); const c = sky.center(); flyHome(c[0], 0, sky.homeFov(), 1200).then(() => { fitBlend(); }); };
 
 /* ---------------------------------------------------------------- live readout of the view, in the side layout */
+const CGRID = (() => { const g = new Uint8Array(64800); let k = 0; for (let i = 0; i < CR.length; i += 2) g.fill(CR[i], k, k += CR[i + 1]); return g; })();
+const constellation = (ra, dec) => CN[CGRID[Math.min(179, Math.max(0, Math.floor(dec + 90))) * 360 + Math.floor(((ra % 360) + 360) % 360)]];
 // equatorial (J2000) to galactic coordinates, the standard rotation
 function galactic(ra, dec) {
   const R = Math.PI / 180, a = ra * R, d = dec * R, aG = 192.85948 * R, dG = 27.12825 * R, lNCP = 122.93192 * R;
@@ -1358,8 +1362,8 @@ function updateLive() {
   if (!SIDE || view !== "home" || !sky.a) return;
   const f = sky.fov(), c = ptr || sky.center(), whole = f > 150 && !ptr;
   const [l, b] = galactic(c[0], c[1]), [sa, sd] = sexa(c[0], c[1]);
-  const where = whole ? "The whole sky" : Math.abs(b) < 5 ? "In the plane of the Milky Way: crowded with stars and dust"
-    : Math.abs(b) < 20 ? "Near the Milky Way" : Math.abs(b) > 60 ? "Far from the Milky Way: mostly distant galaxies" : "Away from the Milky Way";
+  const band = Math.abs(b) < 5 ? "in the Milky Way's plane" : Math.abs(b) < 20 ? "near the Milky Way" : Math.abs(b) > 60 ? "far from the Milky Way" : "away from the Milky Way";
+  const where = whole ? "The whole sky" : `${constellation(c[0], c[1])}, ${band}`;
   const key = [whole, sa, sd, f.toFixed(3), curMap, !!ptr].join("|"); if (key === lastLive) return; lastLive = key;
   $("lvPos").textContent = whole ? "Whole sky" : `${sa}  ${sd}`;
   $("lvFov").textContent = whole ? "360° × 180°" : fovTxt(f);
@@ -1427,7 +1431,7 @@ async function startTour() {
   closeAbout(); closeSearch(true);
   if (view !== "home") { await leave(); await waitFor(() => view === "home", 8000); }
   enterSide(); await sleep(900);
-  const steps = 8; let n = 0; const N = () => `${++n} / ${steps}`;
+  const steps = 9; let n = 0; const N = () => `${++n} / ${steps}`;
   const S = q => document.querySelector(q);
   await waitFor(() => S("#startList li"), 6000);
   const btn = [...document.querySelectorAll("#startList button")].find(b => /Barnard/.test(b.textContent)) || S("#startList button");
@@ -1451,7 +1455,6 @@ async function startTour() {
   const db = S('#bar .navb[data-page="discoveries"]');
   if (!await say("<b>Discoveries.</b> Everything the pipeline caught moving.", db, N(), "Show me")) return;
   await fakeClick(db); await sleep(600);
-  if (!await say("Click any row to fly there.", S("#dlist"), N())) return;
   closeAbout();
   say("Back to the sky…", null, "", "");
   if (app.classList.contains("deep")) exitDepth();

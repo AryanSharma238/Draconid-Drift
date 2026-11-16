@@ -755,7 +755,7 @@ body{font-size:15px}
 #retryBtn{display:none;padding:6px 12px;border-radius:6px;background:#e08a98;color:#2e1a1f;font-weight:600;cursor:pointer}
 #loadBox.err #retryBtn{display:inline-block}
 
-.cform{display:grid;grid-template-columns:1fr auto auto;gap:6px;margin:8px 0}
+.cform{display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px;margin:8px 0}
 .cform input,.cform select{min-width:0;padding:8px 10px;border-radius:6px;background:#3a1d23;color:#f1e3e6;border:1px solid transparent;font:inherit;font-size:13px}
 .cform input:focus,.cform select:focus{outline:none;border-color:#e08a98}
 .cform button{padding:8px 12px;border-radius:6px;background:#e08a98;color:#2e1a1f;font:600 13px/1 inherit;cursor:pointer}
@@ -763,3 +763,6 @@ body{font-size:15px}
 #iSrc:empty{display:none}
 
 #app.touring .navb[data-page="data"],#app.touring .lside .ldata{display:none}
+
+#app.touring.deep #tourBlock{display:none}
+.cform #cra,.cform #cdec{flex:1;min-width:0}

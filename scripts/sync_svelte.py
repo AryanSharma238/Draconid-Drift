@@ -77,7 +77,7 @@ BOOT = r'''(async () => {
 
 def main():
     lib = FE / "src" / "lib"
-    for f in ("sky.js", "healpix.js", "intro.js", "depth.js"):
+    for f in ("sky.js", "healpix.js", "intro.js", "depth.js", "const.js"):
         t = (WEB / f).read_text()
         t = t.replace("await import(THREE_URL)", "await import(/* @vite-ignore */ THREE_URL)")
         (lib / f).write_text(t)

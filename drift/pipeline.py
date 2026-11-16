@@ -198,7 +198,24 @@ def _fetch_via_ec2_tunnel(ra: float, dec: float, size_deg: float, det: int, dete
 
 
 LIVE_MAX_FRAMES = 24    # without the EC2 server, fetch at most this many exposures (evenly spread in time)
-LIVE_MAX_DEG = 0.5      # ... and at most this field size
+LIVE_MAX_DEG = 5.0      # ... and at most this field size
+FULL_RES_DEG = 0.5      # wider fields are resampled to ~361 pixels across and use fewer exposures, so a 2 deg
+                        # patch costs about what a 0.5 deg one does (memory on Streamlit Cloud is ~1 GB)
+
+
+def field_grid(ra, dec, size_deg):
+    """Grid for a field: native 6.15" pixels up to FULL_RES_DEG, coarser beyond (same pixel count)."""
+    size_deg = min(size_deg, LIVE_MAX_DEG)
+    pix = config.PIXSCALE_ARCSEC if size_deg <= FULL_RES_DEG else size_deg * 3600.0 / 361.0
+    return backend_make_grid(ra, dec, size_deg, pix)
+
+
+def frame_cap(size_deg, cap=None):
+    """Exposures to fetch: fewer for wide fields (each raw cut-out grows with the area)."""
+    cap = cap or LIVE_MAX_FRAMES
+    if size_deg <= FULL_RES_DEG:
+        return cap
+    return max(10, int(cap * (FULL_RES_DEG / size_deg) ** 2))
 
 
 async def _load_capped(grid, det, cap=None):
@@ -225,7 +242,12 @@ async def _load_capped(grid, det, cap=None):
 
 def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int, detector_str: str, cap=None) -> Cube:
     """Run `backend.sequence.load_frames` directly using the local S3 footprint index + S3 byte-range reads."""
-    grid = backend_make_grid(ra, dec, min(size_deg, LIVE_MAX_DEG))
+    grid = field_grid(ra, dec, size_deg)
+    cap = frame_cap(grid.size_deg, cap)
+    from backend import config as _cfg
+    conc = _cfg.FETCH_CONCURRENCY
+    if grid.size_deg > FULL_RES_DEG:              # big raw cut-outs: fewer at a time, or memory runs out
+        _cfg.FETCH_CONCURRENCY = 6 if grid.size_deg <= 1.0 else (3 if grid.size_deg <= 2.0 else 2)
     try:
         loaded = asyncio.run(_load_capped(grid, det, cap))
     except RuntimeError:
@@ -236,6 +258,8 @@ def _fetch_via_local_s3_backend(ra: float, dec: float, size_deg: float, det: int
             loop.close()
     except Exception as e:
         raise DataFetchError(f"S3 backend fetch failed: {e}") from e
+    finally:
+        _cfg.FETCH_CONCURRENCY = conc
     if not loaded.frames:
         raise DataFetchError(
             f"No usable SPHEREx {detector_str} frames found at RA={ra:.4f}°, Dec={dec:+.4f}° "
@@ -265,12 +289,13 @@ def load_frames(spec: Spec, demo=False, use_cache=True, progress=None, seed=0, m
         info["elapsed_s"] = time.perf_counter() - t0
         return cube, info
 
-    size_deg = max(min(spec.fov_arcsec / 3600.0, config.MAX_FOV_DEG), 0.01)
+    size_deg = max(min(spec.fov_arcsec / 3600.0, LIVE_MAX_DEG), 0.01)
     det_num = _det_int(spec.detector)
     if progress:
         progress(1, 4)
 
-    cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector, max_frames)
+    # the EC2 server takes fields up to its own MAX_FOV_DEG at native pixels; wider ones are built here
+    cube = _fetch_via_ec2_tunnel(ra, dec, size_deg, det_num, spec.detector, max_frames) if size_deg <= config.MAX_FOV_DEG else None
     if cube is None:
         cube = _fetch_via_local_s3_backend(ra, dec, size_deg, det_num, spec.detector, max_frames)
 

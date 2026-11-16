@@ -147,9 +147,11 @@ def find_movers(cube, target=None, wise_epoch=WISE_EPOCH):
     wcs = cube.wcs
     t_spx = float(np.asarray(mjd_to_year(np.nanmean(cube.mjd))))
     dt = max(t_spx - wise_epoch, 1.0)
-    pm_min = MIN_SHIFT_PX * SPHEREX_PIXEL_ARCSEC * 1000.0 / dt          # mas/yr
+    from .clean import pixscale
+    px_as = pixscale(cube)
+    pm_min = MIN_SHIFT_PX * px_as * 1000.0 / dt          # mas/yr
     ra_c, dec_c = (float(v) for v in wcs.wcs.crval)
-    half = 0.5 * max(nx, ny) * SPHEREX_PIXEL_ARCSEC / 3600.0
+    half = 0.5 * max(nx, ny) * px_as / 3600.0
     reach = 12000.0 * (GAIA_EPOCH - 2000 + 30) / 3.6e6                    # how far a 12"/yr star moves in ~30 yr, deg
     stars = list(gaia_fast_stars(round(ra_c, 4), round(dec_c, 4), round(half * 1.42 + min(reach, 0.1), 4), round(pm_min, 1)))
     if target and np.hypot(target.get("pmra", 0), target.get("pmdec", 0)) >= pm_min:

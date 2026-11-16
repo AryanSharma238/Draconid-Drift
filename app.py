@@ -171,7 +171,7 @@ if req and req.get("nonce") != S.seen:
         if key in PRESETS:
             spec = pipeline.spec_from_target(PRESETS[key])
         else:
-            fov = min(max(float(req.get("fov") or 180.0), 60.0), 7200.0)
+            fov = min(max(float(req.get("fov") or 180.0), 60.0), 18000.0)
             name_job = None
             req_name = req.get("name")
             if req_name in (None, "", "Selected area", "Selected patch"):

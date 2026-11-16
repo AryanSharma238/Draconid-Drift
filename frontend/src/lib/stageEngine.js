@@ -438,41 +438,34 @@ function clearLockAndWarp() {
   }
 }
 
-async function flyTo(ra, dec, fov, dur, label = "") {
+async function flyTo(ra, dec, fov, dur, label = "") {   // turn to the target, then zoom in while it glides diagonally to the centre, never leaving the view
   const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
   const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
   const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
   const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
   const kA = visible ? startFrac : OFF;
-  // Give camera plenty of time (42% of 3.0s = ~1.26s) to smoothly pan and center onto the celestial object
-  const tA = visible ? 0.25 : 0.45;
-  const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));
-  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));
+  const tA = visible ? 0 : 0.5;                     // share of the time spent turning the globe
+    const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));   // wide enough to see where we are going
+  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));    // phase 1 ends halfway (in zoom) between the wide view and the target
   const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
-
   await tween(dur, t => {
-    if (t < tA) {
-      // Phase 1: Camera pan and sphere rotation to orient towards target
+    if (t < tA) {                                    // phase 1: ease out to a wide view, turn, then come back in
       const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
-      const p = ss(clamp01((q - 0.05) / 0.95)), c = radec(slerp(u0, uA, p));
-      const out = ss(clamp01(q / 0.4));
+      const p = ss(clamp01((q - 0.12) / 0.88)), c = radec(slerp(u0, uA, p));          // the globe starts turning just after the zoom-out begins
+      const out = ss(clamp01(q / 0.45));                                               // ~1.7 s to widen, not a jump
       const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
-      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.4) / 0.6)));
-      const f = q < 0.4 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
+      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.45) / 0.55)));
+      const f = q < 0.45 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
       sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
-    } else {
-      // Phase 2: Steady dive & zoom onto the identified star
+    } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
       const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
       const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
       const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
       sky.set(c[0], c[1], f);
     }
-    updateLockAndWarp(ra, dec, t, label);
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.85) / 0.15)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.88) / 0.12)));
   });
   sky.set(ra, dec, fov);
-  updateLockAndWarp(ra, dec, 1, label);
-  if (warpCv) warpCv.classList.remove("on");
 }
 async function flyHome(ra, dec, fov, dur) {         // cinematic pull-back & zoom out to the whole celestial sphere
   const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
@@ -544,12 +537,8 @@ async function go(item) {
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
   const targetLabel = item.name || (item.ra != null && item.dec != null ? `${Number(item.ra).toFixed(2)}°, ${Number(item.dec) >= 0 ? "+" : ""}${Number(item.dec).toFixed(2)}°` : "Target");
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000, targetLabel);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 7500, targetLabel);     // the slow, readable flight
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
-
-  // After arriving and locking on, showcase the star / nebula / patch of space in high resolution for a full 3 seconds
-  // while SPHEREx and archival data are prepared
-  await new Promise(r => setTimeout(r, 3000));
 
   setView("waiting"); tryReveal();
 }
@@ -562,7 +551,7 @@ function startProgressBar() {
   bar.style.width = "0%";
   let progress = 0;
   const startT = performance.now();
-  const duration = 5800;  // smoothly spans the 3s pan + 3s high-resolution star showcase
+  const duration = 7400;  // fills while the 7.5 s flight runs
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
@@ -706,7 +695,7 @@ function fillPage(res) {
   $("iCoord").textContent = `${a}   ${b}`;
   $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
   const lc = res.lc;
-  $("iLc").innerHTML = lc ? `${sparkline(lc.pts)}<span>${lc.word}</span>` : `<span class="dim">Not enough clean frames to tell</span>`;
+  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}</span>` : `<span class="dim">Too few clean exposures to tell</span>`;
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
@@ -1312,6 +1301,14 @@ initProcControls();
 app.classList.add("landing");
 intro.preload().catch(() => {});
 const leaveLanding = () => app.classList.remove("landing");
+function fillStarts() {
+  const sl = $("startList"); if (!sl || sl.childElementCount) return;
+  const items = presetItems(); if (!items.length) return;
+  items.slice(0, 4).forEach(p => { const b = document.createElement("button"); b.type = "button";
+    b.textContent = p.name; b.onclick = () => { leaveLanding(); choose(p); }; sl.appendChild(b); });
+  sl.parentNode.classList.add("ready");
+}
+fillStarts(); setInterval(fillStarts, 500);
 
 const demoEl = $("demo"), demoV = $("demoV"), demoSkip = $("demoSkip");
 function closeDemo() {
@@ -1349,7 +1346,7 @@ function enterDepth() {
 }
 function exitDepth() {
   app.classList.remove("deep"); depth.close(); depthOpen = false;
-  $("timeBtn").textContent = "Past & future"; $("timeBtn").setAttribute("aria-pressed", "false");
+  $("timeBtn").textContent = "3D map: distance & time"; $("timeBtn").setAttribute("aria-pressed", "false");
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
 }
 async function showDepth(res) {

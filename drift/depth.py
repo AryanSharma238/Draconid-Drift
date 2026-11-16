@@ -138,7 +138,10 @@ def depth_map(ra_c, dec_c, field_deg, target_name=None):
     for o in objs:
         o["ly"] = round(o["ly"], 4 if o["ly"] < 100 else 1)
         o.pop("ra"); o.pop("dec")
+    half = max(field_deg / 2.0, 0.01)
+    big = lambda o: (o.get("size") or 0) / 120.0                 # half its size in degrees: a galaxy may hang over the edge
+    objs = [o for o in objs if abs(o["x"]) <= half + big(o) and abs(o["y"]) <= half + big(o)]   # only what is in the patch
     objs.sort(key=lambda o: o["ly"])
-    return dict(radius_deg=r_deg, objects=objs,
+    return dict(radius_deg=half, objects=objs,
                 sources=["Gaia DR3 parallaxes" if gaia is not None else None, "SIMBAD distances and redshifts"],
                 gaia_ok=gaia is not None)

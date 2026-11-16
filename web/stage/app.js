@@ -178,7 +178,7 @@ function bindSky() {
     if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
     // the field is the square that covers the whole highlighted area, centred on it
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
-    if (side > 7200) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 2°.`); }
+    if (side > 18000) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 5°.`); }
     
   // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
   let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
@@ -471,7 +471,7 @@ function fillPage(res) {
   $("iCoord").textContent = `${a}   ${b}`;
   $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
   const lc = res.lc;
-  $("iLc").innerHTML = lc ? `${sparkline(lc.pts)}<span>${lc.word}</span>` : `<span class="dim">Not enough clean frames to tell</span>`;
+  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}</span>` : `<span class="dim">Too few clean exposures to tell</span>`;
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
@@ -803,7 +803,7 @@ function showItems(list) {
 }
 function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
 function choose(it) {
-  const fov = it.key !== "custom" ? it.fov : Math.min(7200, Math.max(300, 1.3 * 60 * (it.size || 0)));
+  const fov = it.key !== "custom" ? it.fov : Math.min(18000, Math.max(300, 1.3 * 60 * (it.size || 0)));
   go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { fov: fov || 300 }));
 }
 
@@ -1040,6 +1040,13 @@ initSideDrawer();
 app.classList.add("landing");
 intro.preload().catch(() => {});
 const leaveLanding = () => app.classList.remove("landing");
+function fillStarts() {
+  const sl = $("startList"); if (!sl || sl.childElementCount || !args || !args.presets || !args.presets.length) return;
+  presetItems().slice(0, 4).forEach(p => { const b = document.createElement("button"); b.type = "button";
+    b.textContent = p.name; b.onclick = () => { leaveLanding(); choose(p); }; sl.appendChild(b); });
+  sl.parentNode.classList.add("ready");
+}
+fillStarts(); setInterval(fillStarts, 500);
 $("exploreBtn").onclick = () => {
   leaveLanding();
   openDrawer();
@@ -1059,7 +1066,7 @@ function enterDepth() {
 }
 function exitDepth() {
   app.classList.remove("deep"); depth.close(); depthOpen = false;
-  $("timeBtn").textContent = "Past & future"; $("timeBtn").setAttribute("aria-pressed", "false");
+  $("timeBtn").textContent = "3D map: distance & time"; $("timeBtn").setAttribute("aria-pressed", "false");
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
 }
 async function showDepth(res) {

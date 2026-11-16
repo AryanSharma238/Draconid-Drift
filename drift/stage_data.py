@@ -5,7 +5,7 @@ import numpy as np
 from astropy.time import Time
 
 from . import SPHEREX_PIXEL_ARCSEC
-from .clean import burst_groups
+from .clean import burst_groups, pixscale
 from .movers import find_movers
 from .render import flip_y, stretch_params, to_dark_jpeg_b64
 from .targets import mjd_to_year
@@ -123,19 +123,32 @@ def brightness(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
                 out.append((float(np.asarray(mjd_to_year(cube.mjd[i]))), f, e, float(cube.wl[i])))
         return out
     pts = collect(_ap)
-    if len(pts) < 0.5 * cube.n:                    # saturated core: use the wings
-        pts = collect(_ring)
+    if len(pts) < 0.5 * cube.n:
+        # saturated core: the wings are not a fair stand-in, because how much of the star is clipped changes from
+        # exposure to exposure. Say so instead of reporting a change that isn't there.
+        return dict(pts=[], word="Too bright to measure: SPHEREx saturates on this star")
     if len(pts) < 6:
         return None
     a = np.array(pts)
-    # each frame sees a slightly different wavelength: compare only frames taken at nearly the same wavelength
-    # (within 1% of each other), so a star's colour is never mistaken for a change in brightness
-    rel = np.full(len(a), np.nan)
-    for i, w in enumerate(a[:, 3]):
-        same = np.abs(a[:, 3] / w - 1) < 0.01
-        if same.sum() >= 3:
-            rel[i] = a[i, 1] / np.median(a[same, 1])
-    keep = np.isfinite(rel)
+    # each frame sees a slightly different wavelength, so first take out the star's colour: fit brightness
+    # against wavelength with a smooth curve (log flux, low order, one round of outlier clipping) and compare
+    # every frame to that curve. A star's colour is then never mistaken for a change in brightness.
+    lw, lf = np.log(a[:, 3]), np.log(a[:, 1])
+    deg = 2 if len(a) >= 12 else 1
+    keep = np.ones(len(a), bool)
+    for _ in range(2):
+        c = np.polyfit(lw[keep], lf[keep], deg)
+        r = lf - np.polyval(c, lw)
+        s0 = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep]))) + 1e-9
+        keep = np.abs(r - np.median(r[keep])) < 5 * s0
+    model = np.polyval(c, lw)
+    if len(a) >= 15:
+        # enough exposures: follow the spectrum's own features (water and methane bands in cool stars) with a running
+        # median along wavelength, so a sharp feature is never read as a brightness change
+        o = np.argsort(lw); k = max(5, (len(a) // 8) | 1); h = k // 2
+        L = lf[o]; sm = np.array([np.median(np.r_[L[max(0, i - h):i], L[i + 1:i + h + 1]]) for i in range(len(o))])   # leave itself out
+        model = np.empty_like(lf); model[o] = sm
+    rel = np.exp(lf - model)
     if keep.sum() < 6:
         return None
     a, rel = a[keep], rel[keep]
@@ -145,7 +158,14 @@ def brightness(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
     if med / np.median(a[:, 2]) < 5:
         word = "too faint to tell"
     elif spread > max(3 * noise, 0.08):
-        word = f"varies by about {100 * (np.percentile(rel, 90) - np.percentile(rel, 10)) / 2:.0f}%"
+        # a real change is coherent in time: exposures taken close together agree. Pure scatter (glare from a
+        # neighbour, a bad background) jumps from one exposure to the next, so check the lag-1 correlation.
+        o = np.argsort(a[:, 0]); r = rel[o] - np.mean(rel[o])
+        ac = float(np.sum(r[1:] * r[:-1]) / (np.sum(r * r) + 1e-12)) if len(r) > 3 else 0.0
+        if ac > 0.3:
+            word = f"varies by about {100 * (np.percentile(rel, 90) - np.percentile(rel, 10)) / 2:.0f}%"
+        else:
+            word = f"too noisy to tell (exposures scatter by ±{100 * spread:.0f}%)"
     else:
         word = f"steady (±{max(100 * spread, 1):.0f}%)"
     return dict(pts=[[round(t, 3), round(float(r), 3)] for t, r in zip(a[:, 0], rel)], word=word)
@@ -184,17 +204,17 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     # SIMBAD positions are for the year 2000: look the target up where it was then
     d00 = float(dec0) + float(pmdec) * (2000.0 - float(epoch0)) / 3.6e6
     r00 = float(ra0) + float(pmra) * (2000.0 - float(epoch0)) / 3.6e6 / max(np.cos(np.radians(d00)), 1e-6)
-    ff = ex.submit(target_facts, name, r00, d00, float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0))
+    ff = ex.submit(target_facts, name, r00, d00, float(nx * pixscale(cube) / 3600.0))
     try:
-        movers = fm.result(timeout=1.4)
+        movers = fm.result(timeout=3.0)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=1.5)
+        objects = fo.result(timeout=4.0 if nx * pixscale(cube) <= 1800 else 8.0)   # wide fields hold far more catalogue rows
     except Exception:
         objects = []
     try:
-        facts = ff.result(timeout=1.5)
+        facts = ff.result(timeout=3.0)
     except Exception:
         facts = {}
     ex.shutdown(wait=False)
@@ -210,7 +230,7 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
         # User tracked a moving star with non-zero PM
         tm = movers[:1] if movers else []
     if tm:
-        moved = tm[0]["shift_px"] * SPHEREX_PIXEL_ARCSEC
+        moved = tm[0]["shift_px"] * pixscale(cube)
         verdict = dict(
             verdict,
             word=f"Moved {moved:.0f}\u2033 since {cmp['year'].lstrip('~')}",
@@ -236,7 +256,7 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
                     name = o["name"]
                     break
     return dict(name=name, ra=float(ra), dec=float(dec), pmra=float(pmra), pmdec=float(pmdec), epoch=float(epoch),
-                ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * SPHEREX_PIXEL_ARCSEC / 3600.0),
+                ra_c=float(ra_c), dec_c=float(dec_c), field_deg=float(nx * pixscale(cube) / 3600.0),
                 nx=int(nx), ny=int(ny), frames=frames, marks=marks, dates=dates, wl=wl, years=years,
                 movers=movers, objects=objects, facts=facts, lc=lc,
                 visits=int(cube.n), span=[Time(float(np.nanmin(cube.mjd)), format="mjd").iso[:7],

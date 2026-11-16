@@ -22,6 +22,11 @@ async function emit(value) {
     }
     onArgs(); return;
   }
+  if (value.type === "facts") {
+    let f = {};
+    try { f = (await (await post("/api/stage/facts", { name: value.name, ra: value.ra, dec: value.dec })).json()).facts || {}; } catch (err) {}
+    args.facts = Object.assign({}, args.facts || {}, { [value.name]: f }); return;
+  }
   const r = last_res || args.result;
   if (!r) return;
   if (value.type === "bands") {
@@ -141,7 +146,14 @@ async function boot() {
   sky.set(0, 0, sky.homeFov()); fitBlend();
   sky.startSpin(2.2); spinning = true;
   bindSky();
-  window.addEventListener("resize", () => { fitBlend(); if (view === "home") sky.a.setFoV(sky.homeFov()); layoutField(); });
+  // only a real change of window size re-fits the whole sky, and only if the whole sky is what is showing:
+  // the Streamlit frame fires resize events of its own, which used to snap a zoomed-in view back out
+  let lastWH = [innerWidth, innerHeight];
+  window.addEventListener("resize", () => {
+    if (Math.abs(innerWidth - lastWH[0]) < 3 && Math.abs(innerHeight - lastWH[1]) < 3) return;
+    lastWH = [innerWidth, innerHeight];
+    fitBlend(); if (view === "home" && sky.fov() > 100) sky.a.setFoV(sky.homeFov()); layoutField();
+  });
   window.__sky = sky; window.__ready = true;
 }
 
@@ -149,6 +161,7 @@ function wake() {                                  // first touch: the universe 
   if (spinning) { sky.haltSpin(); spinning = false; }
   sky.grid(true);
 }
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 const sepDeg = (a, b) => { const u = unit(a[0], a[1]), v = unit(b[0], b[1]); return Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1] + u[2] * v[2]))) * 180 / Math.PI; };
 
 function bindSky() {
@@ -214,42 +227,40 @@ function bindSky() {
     const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
     if (side > 18000) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 5°.`); }
     
-  // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
-  let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
+  // Latch onto what the person is looking at. First choice: a catalogued object inside the box (the one nearest
+  // the box centre, best-known first if several are close), with its name and motion, so the page is about that
+  // star. Second: the brightest point in the box on the 2MASS map. Otherwise: the box itself, as drawn.
+  let tgt = { key: "custom", name: "Selected area", ra: c[0], dec: c[1], pmra: 0, pmdec: 0, epoch: args.mid };
+  const half = side / 7200;                                         // half the box in degrees
   try {
-    const sw = 48, sh = 48;
-    const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
-    const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
-    let maxB = 0, bestX = sw / 2, bestY = sh / 2;
-    for (let py = 0; py < sh; py++) {
-      for (let px = 0; px < sw; px++) {
-        const idx = (py * sw + px) * 4;
-        const b = data[idx] + data[idx + 1] + data[idx + 2];
-        if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+    const cat = await Promise.race([loadCatalog(), sleepMs(1500).then(() => CATALOG || [])]);
+    let best = null, bestScore = Infinity;
+    for (const o of cat || []) {
+      if (Math.abs(o.dec - c[1]) > half * 1.05) continue;
+      const off = offsetOf(c, [o.ra, o.dec]);
+      if (Math.abs(off[0]) > half || Math.abs(off[1]) > half) continue;     // inside the drawn box only
+      if (o.size && o.size / 60 > side / 3600 * 1.5) continue;            // a galaxy far bigger than the box: not "this"
+      const d = Math.hypot(off[0], off[1]) / half, score = d - 0.12 * Math.log10(1 + (o.nb || 0));
+      if (score < bestScore) { bestScore = score; best = o; }
+    }
+    if (best) tgt = { key: "custom", name: best.name, ra: best.ra, dec: best.dec, pmra: best.pmra || 0, pmdec: best.pmdec || 0, epoch: 2000 };
+    else {
+      const sw = 48, sh = 48;
+      const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+      const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+      let maxB = 0, sum = 0, bestX = sw / 2, bestY = sh / 2;
+      for (let py = 0; py < sh; py++) for (let px = 0; px < sw; px++) {
+        const i = (py * sw + px) * 4, v = data[i] + data[i + 1] + data[i + 2]; sum += v;
+        if (v > maxB) { maxB = v; bestX = px; bestY = py; }
+      }
+      if (maxB > 60 && maxB > 4 * sum / (sw * sh)) {                     // a clear point, well above the rest of the box
+        const degW = side / 3600, fx = (bestX + 0.5 - sw / 2) / sw, fy = (sh / 2 - (bestY + 0.5)) / sh;
+        tgt.ra = ((c[0] - fx * degW / Math.cos(c[1] * Math.PI / 180)) % 360 + 360) % 360;
+        tgt.dec = Math.max(-90, Math.min(90, c[1] + fy * degW));
       }
     }
-    // If a clear star peak was found in the box, latch dead-center onto its brightest peak
-    if (maxB > 60) {
-      const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
-      const degW = side / 3600;
-      const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
-      targetRa = ((c[0] + dRa) % 360 + 360) % 360;
-      targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-    }
-  } catch (e) {
-    // Fallback to catalog or center if cutout sampling fails
-    const boxRadiusDeg = Math.max(side / 7200, 0.08);
-    const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
-    if (catList && catList.length) {
-      let best = null, bestDist = boxRadiusDeg;
-      for (const obj of catList) {
-        const d = sepDeg([obj.ra, obj.dec], c);
-        if (d < bestDist) { bestDist = d; best = obj; }
-      }
-      if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
-    }
-  }
-  go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+  } catch (e) { /* keep the box as drawn */ }
+  go(Object.assign(tgt, { fov: Math.max(60, side) }));
 }, true);
 }
 
@@ -320,6 +331,7 @@ function makeOverlay() {
 
 async function go(item) {
   if (busy && view !== "view") return;
+  if (SIDE && view === "home") await unSide();
   leaveLanding();
   if (curMap !== "tmass") setMap("tmass");
   if (app.classList.contains("deep")) exitDepth();
@@ -516,7 +528,7 @@ function fillPage(res) {
 function paintLc(lc) {
   $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}${lc.src ? `<small class="lcsrc">${lc.src}</small>` : ""}</span>`
     : `<span class="dim">Too few clean exposures to tell</span>`;
-  if (lc && !(lc.pts && lc.pts.length)) $("iLc").querySelector("span").insertAdjacentHTML("beforeend", `<small class="lcsrc">Checking NEOWISE instead…</small>`);
+  if (lc && lc.sat && !lc.src) $("iLc").querySelector("span").insertAdjacentHTML("beforeend", `<small class="lcsrc">Checking NEOWISE for a better answer…</small>`);
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
@@ -613,7 +625,7 @@ function showBand(d) {
 function onBands(res) {                             // the other five ranges and the spectra have arrived
   last_res = Object.assign(last_res || {}, { bands: res.bands, spectra: res.spectra });
   if (res.lc && res.lc.src) { last_res.lc = res.lc; paintLc(res.lc); }
-  else if (last_res.lc && !(last_res.lc.pts && last_res.lc.pts.length)) $("iLc").querySelectorAll(".lcsrc").forEach(e => e.remove());
+  else if (last_res.lc && last_res.lc.sat) $("iLc").querySelectorAll(".lcsrc").forEach(e => e.remove());
   buildWave(last_res); drawSpectrum();
   if (bandSel !== detNum(last_res.detector) && bandReady(bandSel)) showBand(bandSel);
 }
@@ -1025,41 +1037,84 @@ async function fillLibrary(which) {
     }
     return;
   }
-  const lib = L.library || [], sA = $("cA"), sB = $("cB");
-  const keep = [sA.value, sB.value];
-  const opts = lib.map((e, i) => `<option value="${i}">${escH(e.name)}</option>`).join("");
-  sA.innerHTML = opts; sB.innerHTML = opts;
-  const idx = n => Math.max(0, lib.findIndex(e => e.name === n));
-  sA.value = keep[0] ? idx(lib[+keep[0]] ? lib[+keep[0]].name : "") : 0;
-  sB.value = keep[1] ? keep[1] : Math.min(1, lib.length - 1);
-  const draw = () => drawCompare(lib[+sA.value], lib[+sB.value]);
-  sA.onchange = draw; sB.onchange = draw; draw();
+  // Compare: search any two objects. Ones already opened come with everything measured; any other object gets its
+  // catalogue facts looked up on the spot (type, distance, temperature, motion); its spectrum appears once opened.
+  const lib = L.library || [];
+  await loadCatalog();
+  const slot = (inp, sug, which) => {
+    const pick = async o => {
+      sug.innerHTML = ""; inp.value = o.name;
+      const have = lib.find(e => e.name.toLowerCase() === o.name.toLowerCase());
+      cmpSel[which] = have || { name: o.name, ra: o.ra, dec: o.dec, pmra: o.pmra, pmdec: o.pmdec, epoch: o.epoch || 2000, kind: o.kind, pending: true };
+      drawCompare(cmpSel.a, cmpSel.b);
+      if (!have) {
+        const f = await factsFor(o);
+        if (cmpSel[which] && cmpSel[which].name === o.name) {
+          Object.assign(cmpSel[which], { pending: false, kind: f.kind || o.kind, distance_ly: f.distance_ly, temp_k: f.temp_k,
+            motion: f.motion_arcsec_yr ?? (Math.hypot(o.pmra || 0, o.pmdec || 0) / 1000 || null), constellation: f.constellation });
+          drawCompare(cmpSel.a, cmpSel.b);
+        }
+      }
+    };
+    inp.oninput = () => {
+      const q = inp.value.trim(); sug.innerHTML = ""; if (q.length < 2) return;
+      const mine = lib.filter(e => e.name.toLowerCase().includes(q.toLowerCase())).slice(0, 4);
+      const rest = famous(q).filter(o => !mine.some(m => m.name.toLowerCase() === o.name.toLowerCase())).slice(0, 7 - mine.length);
+      for (const o of [...mine, ...rest]) {
+        const li = document.createElement("li"); li.innerHTML = `<b>${escH(o.name)}</b><small>${escH(o.kind || "")}${mine.includes(o) ? " · opened" : ""}</small>`;
+        li.onmousedown = e => { e.preventDefault(); pick(o); }; sug.appendChild(li);
+      }
+    };
+    inp.onkeydown = e => { if (e.key === "Enter" && sug.firstChild) sug.firstChild.dispatchEvent(new MouseEvent("mousedown")); };
+    inp.onblur = () => setTimeout(() => { sug.innerHTML = ""; }, 150);
+    return pick;
+  };
+  const pa = slot($("cA"), $("cAs"), "a"), pb = slot($("cB"), $("cBs"), "b");
+  if (!cmpSel.a && lib[0]) pa(lib[0]);
+  if (!cmpSel.b && lib[1]) pb(lib[1]);
+  drawCompare(cmpSel.a, cmpSel.b);
+}
+const cmpSel = { a: null, b: null };
+async function factsFor(o) {                        // catalogue facts for any object, through the server
+  const have = args.facts && args.facts[o.name]; if (have) return have;
+  emit({ type: "facts", nonce: "f" + Date.now() + Math.random().toString(36).slice(2, 5), name: o.name, ra: o.ra, dec: o.dec });
+  for (let i = 0; i < 60; i++) { await sleepMs(250); if (args.facts && args.facts[o.name]) return args.facts[o.name]; }
+  return {};
+}
+function wireOpen(a, b) {
+  document.querySelectorAll("#cspec .copen").forEach(bt => bt.onclick = () => {
+    const e = [a, b].find(x => x.name === bt.dataset.n); if (!e) return;
+    closeAbout(); choose(entryItem(Object.assign({ key: "custom", fov: 300 }, e)));
+  });
 }
 function drawCompare(a, b) {
-  if (!a || !b) { $("ctable").innerHTML = `<p class="dim">Open at least two objects to compare them.</p>`; $("cspec").innerHTML = ""; return; }
+  if (!a || !b) { $("ctable").innerHTML = `<p class="dim">Search for two objects.</p>`; $("cspec").innerHTML = ""; return; }
+  const wait = e => e.pending ? `<span class="dim">looking up…</span>` : null;
   const row = (label, f) => `<tr><th>${label}</th><td>${f(a) ?? "—"}</td><td>${f(b) ?? "—"}</td></tr>`;
   $("ctable").innerHTML = `<table><tr><th></th><th class="ca">${escH(a.name)}</th><th class="cb">${escH(b.name)}</th></tr>
     ${row("What it is", e => escH(e.kind))}
-    ${row("Distance", e => e.distance_ly ? fmtLy(e.distance_ly) : null)}
+    ${row("Distance", e => e.distance_ly ? fmtLy(e.distance_ly) : wait(e))}
     ${row("Surface temperature", e => e.temp_k ? `≈${fmtN(e.temp_k)} K` : null)}
     ${row("Motion on the sky", e => e.motion != null ? `${fmtN(e.motion, e.motion < 1 ? 2 : 1)}″/yr` : null)}
     ${row("Moved since 2000", e => e.moved_arcsec ? `${Math.round(e.moved_arcsec)}″` : null)}
-    ${row("Brightness over time", e => escH(e.lc))}
+    ${row("Brightness over time", e => e.lc ? escH(e.lc) : null)}
     ${row("Objects in the frame", e => e.n_objects)}
     ${row("SPHEREx visits", e => e.visits)}
     ${row("Spectral features", e => e.spectrum && e.spectrum.features && e.spectrum.features.length ? escH([...new Set(e.spectrum.features)].join(", ")) : null)}</table>`;
   // spectra on one chart: each divided by its own median so shapes compare, log wavelength from 0.75 to 5 µm
   const W = 760, H = 240, P = 36, lx = w => P + (Math.log(w) - Math.log(0.75)) / (Math.log(5) - Math.log(0.75)) * (W - 2 * P);
   const series = [[a, "#e8be8c"], [b, "#8fb8ff"]].filter(([e]) => e.spectrum && e.spectrum.pts && e.spectrum.pts.length > 3);
-  if (!series.length) { $("cspec").innerHTML = `<p class="dim">No spectrum yet. Open each object once; its spectrum is measured while you look.</p>`; return; }
+  const openBtn = e => (e.spectrum && e.spectrum.pts && e.spectrum.pts.length > 3) ? "" : `<button type="button" class="copen" data-n="${escH(e.name)}">Open ${escH(e.name)} to measure its spectrum</button>`;
+  const btns = [a, b].map(openBtn).join("");
+  if (!series.length) { $("cspec").innerHTML = btns ? `<div class="cbtns">${btns}</div>` : ""; wireOpen(a, b); return; }
   const norm = series.map(([e, c]) => { const v = e.spectrum.pts.map(p => p[1]).sort((x, y) => x - y), m = v[v.length >> 1]; return [e, c, e.spectrum.pts.map(p => [p[0], p[1] / m])]; });
   const all = norm.flatMap(s => s[2].map(p => p[1])), hi = Math.max(1.5, ...all), lo = Math.min(0.5, ...all);
   const ly = v => H - P - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (H - 2 * P);
   const ticks = [1, 2, 3, 4, 5].map(w => `<line x1="${lx(w)}" x2="${lx(w)}" y1="${H - P}" y2="${H - P + 5}" stroke="rgba(255,255,255,.3)"/><text x="${lx(w)}" y="${H - P + 18}" text-anchor="middle">${w}${w === 5 ? " µm" : ""}</text>`).join("");
   const lines = norm.map(([e, c, pts]) => `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${lx(p[0]).toFixed(1)},${ly(p[1]).toFixed(1)}`).join("")}" fill="none" stroke="${c}" stroke-width="2"/>`).join("");
   const key = norm.map(([e, c], i) => `<text x="${P + i * 220}" y="18" style="fill:${c};font-weight:600">${escH(e.name)}</text>`).join("");
-  $("cspec").innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="cchart"><line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="rgba(255,255,255,.2)"/>${ticks}${lines}${key}</svg>
-    <p class="dim">Each spectrum is divided by its own median, so the chart compares shapes (colour and molecular dips), not brightness.</p>`;
+  $("cspec").innerHTML = (btns ? `<div class="cbtns">${btns}</div>` : "") + `<svg viewBox="0 0 ${W} ${H}" class="cchart"><line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="rgba(255,255,255,.2)"/>${ticks}${lines}${key}</svg>`;
+  wireOpen(a, b);
 }
 
 /* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
@@ -1180,7 +1235,7 @@ $("demoBtn").onclick = () => {                      // the film, full screen; wh
     if (done) return; done = true;
     box.classList.remove("on"); enterSide();
     setTimeout(() => { v.pause(); v.currentTime = 0; }, 900);
-    if (ended === true) setTimeout(startTour, 1400);
+    if (ended === true) startTour();
   };
   box.classList.add("on"); v.currentTime = 0;
   v.play().catch(() => finish(false));                // cannot play (no video support): go straight to the site
@@ -1216,6 +1271,20 @@ function placeSide() {
     return 360 * Math.max(W / (0.93 * ws), W / (2 * (H - topPad - 16 - 80)));
   };
 }
+// leaving the side layout for a flight: slide the globe back to the centre in one smooth move, same size, so it
+// never jumps or changes size before the camera starts to move
+async function unSide() {
+  const g = sideGeom(), sy0 = SY;
+  clip.style.transition = "none"; $("blend").style.transition = "none";
+  app.classList.add("leaving-side");
+  await tween(650, t => {
+    const p = 1 - smooth(t), tr = `translate(${g.dx * p}px,${g.dy * p}px) scale(1,${(1 + (sy0 - 1) * p).toFixed(3)})`;
+    clip.style.transform = tr; $("blend").style.transform = tr;
+  });
+  SIDE = false; SY = 1; clip.style.transform = ""; $("blend").style.transform = "";
+  clip.style.transition = ""; $("blend").style.transition = "";
+  app.classList.remove("leaving-side");
+}
 function enterSide() {
   if (SIDE && app.classList.contains("side")) return;
   app.classList.add("landing", "side"); SIDE = true;
@@ -1224,7 +1293,7 @@ function enterSide() {
     if (view === "home") { const f0 = sky.fov(), f1 = sky.homeFov(); tween(1100, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); }
   });
 }
-window.addEventListener("resize", () => { if (SIDE) { placeSide(); if (view === "home" && sky.fov() > 100) sky.a.setFoV(sky.homeFov()); } });
+window.addEventListener("resize", () => { if (SIDE) placeSide(); });
 // map controls under the globe: which wavelength the map shows, and zoom
 const MAPS = { dss: SURVEYS.dss.url, tmass: MAP_URL, wise: SURVEYS.wise.url };
 function setMap(k) {
@@ -1237,6 +1306,34 @@ const zoomBy = k => { wake(); const f0 = sky.fov(), f1 = Math.min(sky.homeFov(),
 $("zIn").onclick = () => zoomBy(0.5); $("zOut").onclick = () => zoomBy(2);
 $("zHome").onclick = () => { wake(); const c = sky.center(); flyHome(c[0], 0, sky.homeFov(), 1200).then(() => { fitBlend(); }); };
 
+/* ---------------------------------------------------------------- live readout of the view, in the side layout */
+// equatorial (J2000) to galactic coordinates, the standard rotation
+function galactic(ra, dec) {
+  const R = Math.PI / 180, a = ra * R, d = dec * R, aG = 192.85948 * R, dG = 27.12825 * R, lNCP = 122.93192 * R;
+  const sb = Math.sin(d) * Math.sin(dG) + Math.cos(d) * Math.cos(dG) * Math.cos(a - aG);
+  const b = Math.asin(sb);
+  const y = Math.cos(d) * Math.sin(a - aG), x = Math.sin(d) * Math.cos(dG) - Math.cos(d) * Math.sin(dG) * Math.cos(a - aG);
+  let l = lNCP - Math.atan2(y, x); l = ((l / R) % 360 + 360) % 360;
+  return [l, b / R];
+}
+const MAPNAME = { dss: "Visible light (DSS)", tmass: "Near-infrared (2MASS)", wise: "Mid-infrared (AllWISE)" };
+function fovTxt(f) { return f >= 2 ? `${f.toFixed(f >= 20 ? 0 : 1)}° across` : f >= 1 / 30 ? `${(f * 60).toFixed(1)}′ across` : `${(f * 3600).toFixed(0)}″ across`; }
+let lastLive = "";
+function updateLive() {
+  if (!SIDE || view !== "home" || !sky.a) return;
+  const f = sky.fov(), c = sky.center(), whole = f > 150;
+  const [l, b] = galactic(c[0], c[1]), [sa, sd] = sexa(c[0], c[1]);
+  const where = whole ? "The whole sky" : Math.abs(b) < 5 ? "In the plane of the Milky Way: crowded with stars and dust"
+    : Math.abs(b) < 20 ? "Near the Milky Way" : Math.abs(b) > 60 ? "Far from the Milky Way: mostly distant galaxies" : "Away from the Milky Way";
+  const key = [whole, sa, sd, f.toFixed(3), curMap].join("|"); if (key === lastLive) return; lastLive = key;
+  $("lvPos").textContent = whole ? "Whole sky" : `${sa}  ${sd}`;
+  $("lvFov").textContent = whole ? "360° × 180°" : fovTxt(f);
+  $("lvGal").textContent = whole ? "—" : `l ${l.toFixed(1)}°, b ${b >= 0 ? "+" : "−"}${Math.abs(b).toFixed(1)}°`;
+  $("lvWhere").textContent = where;
+  $("lvMap").textContent = MAPNAME[curMap] || "";
+}
+setInterval(updateLive, 250);
+
 /* ---------------------------------------------------------------- the guided tour */
 // Runs after the demo film (or from Tour in the top bar): opens WISE 0855-0714 and walks through every feature.
 // A ring stands in for the mouse: it glides to what it is about to press and pulses, then the page really does it.
@@ -1244,12 +1341,23 @@ let touring = false, tourStep = null;
 const tourEl = $("tour"), curEl = $("tourCur"), hlEl = $("tourHl");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const waitFor = async (ok, ms) => { const t0 = performance.now(); while (!ok()) { if (!touring || performance.now() - t0 > ms) return false; await sleep(150); } return true; };
+function rectOf(el) {
+  const els = (Array.isArray(el) ? el : [el]).filter(e => e && e.getClientRects().length && getComputedStyle(e).visibility !== "hidden");
+  if (!els.length) return null;
+  const rs = els.map(e => e.getBoundingClientRect()).filter(r => r.width > 2 && r.height > 2);
+  if (!rs.length) return null;
+  const l = Math.min(...rs.map(r => r.left)), t = Math.min(...rs.map(r => r.top)), r = Math.max(...rs.map(r => r.right)), b = Math.max(...rs.map(r => r.bottom));
+  return { left: l, top: t, right: r, bottom: b, width: r - l, height: b - t };
+}
+let hlFor = null;
 function hilite(el) {
-  if (!el) { hlEl.classList.remove("on"); return null; }
-  const r = el.getBoundingClientRect();
+  hlFor = el;
+  const r = el ? rectOf(el) : null;
+  if (!r) { hlEl.classList.remove("on"); return null; }
   Object.assign(hlEl.style, { left: (r.left - 6) + "px", top: (r.top - 6) + "px", width: (r.width + 12) + "px", height: (r.height + 12) + "px" });
   hlEl.classList.add("on"); return r;
 }
+setInterval(() => { if (touring && hlFor) hilite(hlFor); }, 400);          // follow the layout while panels animate
 function say(text, el, n, next = "Next") {
   const r = hilite(el);
   $("tourTx").innerHTML = text; $("tourN").textContent = n || ""; $("tourNext").textContent = next; $("tourNext").style.display = next ? "" : "none";
@@ -1262,14 +1370,7 @@ function say(text, el, n, next = "Next") {
     else { x = Math.min(Math.max(16, r.left), W - bw - 16); y = r.bottom + bh + 30 < H ? r.bottom + 14 : Math.max(16, r.top - bh - 14); }
   }
   Object.assign(tourEl.style, { left: x + "px", top: Math.min(Math.max(16, y), H - bh - 16) + "px", width: bw + "px" });
-  // no clicking needed: each step moves on by itself once there has been time to read it (Next skips ahead)
-  clearTimeout(say.t); const bar = $("tourBar");
-  if (next && next !== "Finish") {
-    const ms = Math.max(4000, 2000 + 280 * $("tourTx").textContent.split(/\s+/).length);
-    bar.style.transition = "none"; bar.style.width = "0%"; void bar.offsetWidth;
-    bar.style.transition = `width ${ms}ms linear`; bar.style.width = "100%";
-    say.t = setTimeout(() => { const f = tourStep; tourStep = null; if (f) f(true); }, ms);
-  } else { bar.style.transition = "none"; bar.style.width = "0%"; }
+  $("tourBar").style.width = "0%";
   return new Promise(res => { tourStep = res; });
 }
 async function fakeClick(el) {                       // glide the ring there, pulse, then press for real
@@ -1283,42 +1384,48 @@ async function fakeClick(el) {                       // glide the ring there, pu
 $("tourNext").onclick = () => { clearTimeout(say.t); const f = tourStep; tourStep = null; if (f) f(true); };
 $("tourSkip").onclick = () => endTour();
 function endTour() {
-  clearTimeout(say.t); touring = false; tourEl.classList.remove("on"); curEl.classList.remove("on"); hlEl.classList.remove("on");
+  clearTimeout(say.t); touring = false; hlFor = null; app.classList.remove("touring"); tourEl.classList.remove("on"); curEl.classList.remove("on"); hlEl.classList.remove("on");
   const f = tourStep; tourStep = null; if (f) f(false);
 }
 async function startTour() {
-  if (touring) return; touring = true;
+  if (touring) return; touring = true; app.classList.add("touring");
   closeAbout(); closeSearch(true);
   if (view !== "home") { await leave(); await waitFor(() => view === "home", 8000); }
-  enterSide(); await sleep(1200);
-  const steps = 7; let n = 0; const N = () => `${++n} / ${steps}`;
+  enterSide(); await sleep(900);
+  const steps = 9; let n = 0; const N = () => `${++n} / ${steps}`;
   const S = q => document.querySelector(q);
   await waitFor(() => S("#startList li"), 6000);
-  const btn = [...document.querySelectorAll("#startList button")].find(b => /WISE 0855/.test(b.textContent)) || S("#startList button");
+  const btn = [...document.querySelectorAll("#startList button")].find(b => /Barnard/.test(b.textContent)) || S("#startList button");
   if (!touring || !btn) return endTour();
-  // no button to press here: the ring picks WISE 0855-0714 by itself
-  hilite(btn); btn.classList.add("tour"); await sleep(700); await fakeClick(btn); btn.classList.remove("tour");
-  say("Flying there and loading every SPHEREx image of this spot…", null, "", "");
+  if (!await say("Pick a star, search, or right-drag on the globe. We'll open <b>Barnard's Star</b>.", btn, N())) return;
+  btn.classList.add("tour"); await fakeClick(btn); btn.classList.remove("tour");
+  say("Flying there while every SPHEREx image loads…", null, "", "");
   if (!await waitFor(() => view === "view", 120000)) return endTour();
   await sleep(900);
-  if (!await say("<b>Then and now.</b> Left: the sky years ago. Right: SPHEREx today. The rings show where the star was and is.", S("#page2"), N())) return;
-  if (!await say("<b>Wavelength.</b> Six ranges from 0.75 to 5 µm. Click one to switch.", S("#foot #wave"), N())) return;
-  if (!await say("<b>The star.</b> Distance, temperature, spectrum and brightness over time.", S("#info"), N())) return;
-  if (!await say("<b>In the frame.</b> Everything bright here. Hover one to ring it.", S("#iObjs"), N())) return;
-  // no button to press here either: the ring opens the 3D map
-  const tb = S("#timeBtn"); hilite(tb); await sleep(600); await fakeClick(tb);
-  say("Placing every star and galaxy at its distance…", null, "", "");
-  await waitFor(() => depthOpen, 45000); await sleep(800);
+  if (!await say("<b>Then and now.</b> Left: 2MASS around 2000. Right: SPHEREx today. Watch the star jump.", [S("#pWise"), S("#pSpx")], N())) return;
+  if (!await say("<b>Wavelength.</b> Six ranges from 0.75 to 5 µm.", S("#foot #wave"), N())) return;
+  if (!await say("<b>The star.</b> Distance, temperature, spectrum and brightness.", S("#info"), N())) return;
+  if (!await say("<b>In the frame.</b> Everything bright here. Hover to ring it.", S("#iObjs"), N())) return;
+  if (!await say("<b>3D map.</b> Every object at its real distance.", S("#timeBtn"), N(), "Open it")) return;
+  await fakeClick(S("#timeBtn"));
+  say("Placing everything at its distance…", null, "", "");
+  await waitFor(() => depthOpen, 45000); await sleep(900);
   if (!touring) return;
-  if (!await say("<b>3D map.</b> Each object at its real distance. Drag to turn, slide to travel in time.", S("#pDepth"), N())) return;
+  if (!await say("Drag to turn, scroll to zoom, slide to travel in time.", [S("#pDepth"), S("#timebar")], N())) return;
   if (app.classList.contains("deep")) exitDepth();
-  const db = document.querySelector('#bar .navb[data-page="discoveries"]'); hilite(db); await sleep(500); await fakeClick(db); await sleep(700);
-  if (!await say("<b>Discoveries.</b> Every star the pipeline caught moving or changing. Click one to fly there.", $("dlist"), N())) return;
+  const db = S('#bar .navb[data-page="discoveries"]');
+  if (!await say("<b>Discoveries.</b> Everything the pipeline caught moving.", db, N(), "Show me")) return;
+  await fakeClick(db); await sleep(600);
+  if (!await say("Click any row to fly there.", S("#dlist"), N())) return;
+  const dt = S('#bar .navb[data-page="data"]');
+  await fakeClick(dt); await sleep(600);
+  if (!await say("<b>Data.</b> Where every number comes from.", S('#about .pg[data-page="data"]'), N())) return;
   closeAbout();
-  if (!await say("That's it. Back to the sky.", null, `${steps} / ${steps}`, "Finish")) return;
-  touring = false; tourEl.classList.remove("on"); hlEl.classList.remove("on");
+  say("Back to the sky…", null, "", "");
   if (app.classList.contains("deep")) exitDepth();
-  await leave();
+  await leave(); await waitFor(() => view === "home", 8000); await sleep(1300);
+  if (!await say("<b>You are looking at</b> updates as you move around. Your turn.", S("#land .ldata"), `${steps} / ${steps}`, "Finish")) return;
+  endTour();
 }
 window.addEventListener("resize", () => { if (touring && tourStep) hlEl.classList.remove("on"); });
 

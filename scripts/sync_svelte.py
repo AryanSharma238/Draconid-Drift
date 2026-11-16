@@ -31,6 +31,11 @@ async function emit(value) {
     }
     onArgs(); return;
   }
+  if (value.type === "facts") {
+    let f = {};
+    try { f = (await (await post("/api/stage/facts", { name: value.name, ra: value.ra, dec: value.dec })).json()).facts || {}; } catch (err) {}
+    args.facts = Object.assign({}, args.facts || {}, { [value.name]: f }); return;
+  }
   const r = last_res || args.result;
   if (!r) return;
   if (value.type === "bands") {

@@ -16,6 +16,7 @@ import time
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(HERE, "data", "library.json")
 STAGE_DIR = os.path.join(HERE, "data", "stage")
+SEED = os.path.join(HERE, "data", "discoveries_seed.json")      # real pipeline runs on well-known stars (scripts/build_discoveries.py)
 _LOCK = threading.Lock()
 MAX_ENTRIES = 400
 
@@ -124,6 +125,12 @@ def _seed():
             lib[e["name"]] = e
         except Exception:
             continue
+    try:
+        with open(SEED, encoding="utf-8") as fh:
+            for name, e in json.load(fh).items():
+                lib.setdefault(name, e)
+    except Exception:
+        pass
     return lib
 
 
@@ -131,8 +138,12 @@ def listing():
     """dict(discoveries=[...newest first], library=[...all, for Compare])."""
     with _LOCK:
         lib = _load()
+        seed = _seed()
         if not lib:
-            lib = _seed()
+            lib = seed
             _save(lib)
+        else:
+            for k, v in seed.items():
+                lib.setdefault(k, v)
     rows = sorted(lib.values(), key=lambda e: -(e.get("when") or 0))
     return dict(discoveries=[e for e in rows if e.get("discovery")], library=rows)

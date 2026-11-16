@@ -39,15 +39,14 @@
         <label class="lsearch"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 20 20"/></svg><input id="lq" type="text" placeholder="Search a star or a place in the sky" autocomplete="off" spellcheck="false" aria-label="Search a star or a place in the sky"></label>
         <ul id="startList"></ul>
       </section>
-      <section class="lbox ldata" aria-label="The data">
-        <h2>The data behind it</h2>
-        <dl>
-          <div><dt>SPHEREx</dt><dd>2025–26 · 0.75–5 µm in 102 bands · the images you play</dd></div>
-          <div><dt>2MASS</dt><dd>1997–2001 · 1.2, 1.6, 2.2 µm · the sky of 2000</dd></div>
-          <div><dt>AllWISE</dt><dd>2010 · 3.4–22 µm · the long-wavelength comparison</dd></div>
-          <div><dt>Gaia DR3</dt><dd>parallaxes and motions · distances in the 3D map</dd></div>
-          <div><dt>NEOWISE</dt><dd>2014–24 · brightness of stars too bright for SPHEREx</dd></div>
-          <div><dt>SIMBAD</dt><dd>names, types and spectral classes</dd></div>
+      <section class="lbox ldata" aria-label="What you are looking at">
+        <h2>You are looking at</h2>
+        <dl id="liveView">
+          <div><dt>Centre</dt><dd id="lvPos">—</dd></div>
+          <div><dt>Field</dt><dd id="lvFov">—</dd></div>
+          <div><dt>Galactic</dt><dd id="lvGal">—</dd></div>
+          <div><dt>Region</dt><dd id="lvWhere">—</dd></div>
+          <div><dt>Map</dt><dd id="lvMap">—</dd></div>
         </dl>
       </section>
     </div>
@@ -121,7 +120,7 @@
   <section id="about" aria-hidden="true">
         <div class="pg paper" data-page="how">
       <h1>How Draconid Drift works</h1>
-      <p class="lede">A technical description of every step between the SPHEREx archive and the page you see: which data are used, how exposures become a movie, how motion, spectra, brightness and distance are measured, and where each method stops being reliable.</p>
+      <p class="lede">The data, the methods, and where each method stops working.</p>
       <nav class="toc"><a href="#h-data">1 Data</a><a href="#h-cube">2 Exposures to a cube</a><a href="#h-motion">3 Motion</a><a href="#h-search">4 Finding unknown movers</a><a href="#h-spec">5 Spectra</a><a href="#h-lc">6 Brightness over time</a><a href="#h-frame">7 What is in the frame</a><a href="#h-3d">8 Distances and the 3D map</a><a href="#h-lim">9 Limits</a><a href="#h-ref">References</a></nav>
 
       <h2 id="h-data">1 Data</h2>
@@ -134,7 +133,7 @@
         <tr><td>Gaia DR3</td><td>2016.0</td><td>optical</td><td>—</td><td>parallax, proper motion, radial velocity</td></tr>
         <tr><td>SIMBAD</td><td>—</td><td>—</td><td>—</td><td>names, types, spectral classes, redshifts</td></tr>
       </tbody></table>
-      <p>SPHEREx observes through linear variable filters: the wavelength a pixel sees changes across each of its six detectors. A given point on the sky therefore lands on a different wavelength in every exposure, and as the telescope revisits it over a six-month survey the exposures together sample its whole spectrum. That one fact drives most of the design below: consecutive frames of the same spot are <em>not</em> taken at the same colour.</p>
+      <p>SPHEREx observes through linear variable filters: the wavelength a pixel sees changes across each of its six detectors. So each exposure of a given spot is taken at a different wavelength, and over a six-month survey the exposures cover its whole spectrum. Two frames of the same spot are therefore never at the same colour.</p>
 
       <h2 id="h-cube">2 From exposures to a cube</h2>
       <figure><svg viewBox="0 0 680 120" class="fig"><g font-size="12" fill="#e9edf2" text-anchor="middle">
@@ -162,7 +161,7 @@
       <p>A catalogue position \((\alpha_0,\delta_0)\) at epoch \(t_0\) with proper motion \((\mu_&#123;\alpha*&#125;,\mu_\delta)\) (where \(\mu_&#123;\alpha*&#125;=\mu_\alpha\cos\delta\)) is carried to time \(t\) by</p>
       $$ \delta(t)=\delta_0+\mu_\delta\,(t-t_0),\qquad \alpha(t)=\alpha_0+\frac&#123;\mu_&#123;\alpha*&#125;\,(t-t_0)&#125;&#123;\cos\delta(t)&#125;. $$
       <p>The shift in pixels is \(\Delta=\mu\,\Delta t/p\). For Barnard's Star, \(\mu=10.4''\,\mathrm&#123;yr^&#123;-1&#125;&#125;\): over the 26 years between 2MASS and SPHEREx it moves \(270''\), about 44 SPHEREx pixels, which is why it visibly jumps between the two panels.</p>
-      <p>The "moved" label is not taken on trust. Every star from Gaia DR3 (with SIMBAD as a fast back-up) whose motion would carry it at least a few pixels between the archive epoch and SPHEREx is moved to the SPHEREx epoch, and counted only if the deep stack shows a point source there: a local peak with signal-to-noise \(\ge\) the threshold, centred within a pixel, while its old position is much fainter. A target Gaia cannot see, such as a cold brown dwarf, is added from its catalogue motion under the same test.</p>
+      <p>A star is marked as moved only after a check. Each Gaia DR3 star (SIMBAD as back-up) that should shift by a few pixels is carried to the SPHEREx epoch and kept only if the deep stack shows a point source there, centred within one pixel, while its old position is much fainter. Objects Gaia cannot see, such as cold brown dwarfs, get the same test using their catalogue motion.</p>
 
       <h2 id="h-search">4 Finding movers nobody listed</h2>
       <p>To look for objects with no catalogue entry, the frames are shifted along a trial velocity \(\mathbf v=(v_x,v_y)\) in pixels per year and stacked (shift-and-stack):</p>
@@ -170,7 +169,7 @@
       <p>A real mover stacks into a sharp peak only at its true velocity. Before stacking, each frame has subtracted from it a co-add of frames from <em>other</em> passes taken at nearly the same wavelength (within a fraction of \(\lambda\)), which removes static sources without mistaking a star's colour for change. The noise \(\sigma_&#123;\mathbf v&#125;\) is measured from the lower half of the stack's pixel distribution only, because smeared stars inflate the upper half.</p>
       <p>The test statistic compares moving against still, \(T=\nu_&#123;\mathbf v&#125;^2-\nu_0^2\). Its significance is measured empirically: the frame times are shuffled \(N\) times, the whole search over the same region and velocity grid is rerun on each shuffle, and</p>
       $$ \mathrm&#123;FAP&#125;=\frac&#123;1+\#\&#123;T_&#123;\text&#123;shuffled&#125;&#125;\ge T\&#125;&#125;&#123;1+N&#125;,\qquad \text&#123;confidence&#125;=1-\mathrm&#123;FAP&#125;. $$
-      <p>Because each shuffle searches everywhere the real search did, the look-elsewhere effect is included. Confidence is not the probability that an object is real; five further checks address that: enough signal, motion beating stillness, agreement between the two halves of the data, survival when any single frame is dropped, and clean pixels along the track.</p>
+      <p>Each shuffle repeats the full search, so the look-elsewhere effect is included. Confidence is not the probability that an object is real. Five further checks cover that:</p><ul><li>enough signal</li><li>motion fits better than no motion</li><li>both halves of the data agree</li><li>the result survives dropping any one frame</li><li>the pixels along the track are clean</li></ul>
 
       <h2 id="h-spec">5 Spectra</h2>
       <p>For a source at pixel \((x_i,y_i)\) in frame \(i\) (moving sources follow their track), aperture photometry inside radius \(r\) with a local background \(b_i\) from a surrounding annulus gives</p>
@@ -236,12 +235,15 @@
       </ol>
     </div>
     <div class="pg wide" data-page="discoveries"><h1>Discoveries</h1>
-      <p>Everything the pipeline has caught so far: stars it confirmed moving against the old sky, and objects whose brightness changes in step over time. A new entry appears whenever anyone opens something that qualifies. Click one to fly there.</p>
+      <p>Stars the pipeline confirmed moving, and objects whose brightness changes. Click one to fly there.</p>
       <div class="dhead"><span>Object</span><span>What we found</span><span>Confidence</span><span>Distance</span><span>Logged</span></div>
       <ul id="dlist" class="dlist"></ul></div>
     <div class="pg wide" data-page="compare"><h1>Compare</h1>
-      <p>Put any two objects side by side. The list holds everything opened so far; open a new one to add it.</p>
-      <div class="cpick"><label><span>First</span><select id="cA"></select></label><label><span>Second</span><select id="cB"></select></label></div>
+      <p>Search any two objects and see them side by side.</p>
+      <div class="cpick">
+        <div class="cbox"><span>First</span><input id="cA" type="text" autocomplete="off" spellcheck="false" placeholder="Search any star or galaxy"><ul class="csug" id="cAs"></ul></div>
+        <div class="cbox"><span>Second</span><input id="cB" type="text" autocomplete="off" spellcheck="false" placeholder="Search any star or galaxy"><ul class="csug" id="cBs"></ul></div>
+      </div>
       <div id="ctable" class="ctable"></div>
       <h2 class="csub">Spectra</h2>
       <div id="cspec" class="cspec"></div></div>
@@ -251,10 +253,11 @@
       <p><b>Gaia DR3</b> parallaxes, proper motions and radial velocities, ESA.</p>
       <p><b>NEOWISE</b> single-exposure photometry 2014–2024, NASA/IPAC Infrared Science Archive.</p>
       <p><b>SIMBAD</b> object names and types, CDS Strasbourg (Harvard mirror).</p>
-      <p>Built for the NASA Space Apps Challenge 2026, Planet X and SPHEREx.</p></div>
+</div>
   </section>
   <div id="toast" role="status"></div>
   <div id="tour" role="dialog" aria-live="polite"><p id="tourTx"></p><i id="tourBar"></i><div class="tb"><span id="tourN"></span><button id="tourSkip" type="button">End tour</button><button id="tourNext" type="button">Next</button></div></div>
+  <div id="tourBlock" aria-hidden="true"></div>
   <div id="tourCur" aria-hidden="true"></div>
   <div id="tourHl" aria-hidden="true"></div>
   <div id="demo" aria-hidden="true"><video id="demoV" src="/demo.mp4" playsinline preload="auto"></video>

@@ -95,9 +95,10 @@ export async function open(el, data, res) {
   // start with everything in view: Earth at the near end, the farthest object at the far end, with a margin
   const far = Math.min(10.3, hi + 0.5) * DEC;
   let cx = far / 2, span = Math.max(3 * DEC, far * 1.18 + 1.2);
-  let yaw = 0, pitch = 0.18, roll = 0.5, time = 0, W = 1, H = 1;
+  let yaw = 0.42, pitch = 0.26, roll = 0.5, time = 0, W = 1, H = 1;   // start turned a little, so it reads as 3D
   const size = () => { const r = el.getBoundingClientRect(); W = r.width; H = r.height; renderer.setSize(W, H, false); };
   size(); const ro = new ResizeObserver(size); ro.observe(el);
+  setTimeout(size, 120); setTimeout(size, 600);              // the panel may still be settling when the view opens
   let drag = null;
   cv.addEventListener("contextmenu", e => e.preventDefault());
   cv.addEventListener("pointerdown", e => { e.preventDefault(); drag = [e.clientX, e.clientY, cx, yaw, pitch, e.shiftKey || e.button === 2]; cv.setPointerCapture(e.pointerId); tip.classList.remove("on"); });

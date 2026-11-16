@@ -122,53 +122,61 @@ def brightness(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
             if np.isfinite(f) and np.isfinite(e) and f > 0 and np.isfinite(cube.wl[i]):
                 out.append((float(np.asarray(mjd_to_year(cube.mjd[i]))), f, e, float(cube.wl[i])))
         return out
-    pts = collect(_ap)
+    pts, wings = collect(_ap), False
     if len(pts) < 0.5 * cube.n:
-        # saturated core: the wings are not a fair stand-in, because how much of the star is clipped changes from
-        # exposure to exposure. Say so instead of reporting a change that isn't there.
-        return dict(pts=[], word="Too bright to measure: SPHEREx saturates on this star")
-    if len(pts) < 6:
-        return None
+        # saturated core: measure in the star's wings instead. How much of the star is clipped changes from exposure
+        # to exposure, so this is rougher: the answer is still given, with a wide +/- and flagged as approximate
+        ring = collect(_ring)
+        if len(ring) > len(pts):
+            pts, wings = ring, True
+    if len(pts) < 2:
+        return dict(pts=[], word="no usable exposures here", sat=wings) if wings else None
     a = np.array(pts)
+    n = len(a)
     # each frame sees a slightly different wavelength, so first take out the star's colour: fit brightness
     # against wavelength with a smooth curve (log flux, low order, one round of outlier clipping) and compare
     # every frame to that curve. A star's colour is then never mistaken for a change in brightness.
     lw, lf = np.log(a[:, 3]), np.log(a[:, 1])
-    deg = 2 if len(a) >= 12 else 1
-    keep = np.ones(len(a), bool)
+    deg = 2 if n >= 12 else 1 if n >= 4 else 0
+    keep = np.ones(n, bool)
     for _ in range(2):
         c = np.polyfit(lw[keep], lf[keep], deg)
         r = lf - np.polyval(c, lw)
         s0 = 1.4826 * np.median(np.abs(r[keep] - np.median(r[keep]))) + 1e-9
         keep = np.abs(r - np.median(r[keep])) < 5 * s0
+        if keep.sum() < 2:
+            keep[:] = True
+            break
     model = np.polyval(c, lw)
-    if len(a) >= 15:
+    if n >= 15:
         # enough exposures: follow the spectrum's own features (water and methane bands in cool stars) with a running
         # median along wavelength, so a sharp feature is never read as a brightness change
-        o = np.argsort(lw); k = max(5, (len(a) // 8) | 1); h = k // 2
+        o = np.argsort(lw); k = max(5, (n // 8) | 1); h = k // 2
         L = lf[o]; sm = np.array([np.median(np.r_[L[max(0, i - h):i], L[i + 1:i + h + 1]]) for i in range(len(o))])   # leave itself out
         model = np.empty_like(lf); model[o] = sm
     rel = np.exp(lf - model)
-    if keep.sum() < 6:
-        return None
     a, rel = a[keep], rel[keep]
     med = np.median(a[:, 1])
-    spread = 1.4826 * np.median(np.abs(rel - 1))
+    spread = 1.4826 * np.median(np.abs(rel - 1)) if len(rel) > 2 else float(np.std(rel))
     noise = float(np.median(a[:, 2]) / med)
-    if med / np.median(a[:, 2]) < 5:
-        word = "too faint to tell"
+    pm = lambda x: f"±{min(99, max(1, round(100 * x)))}%"
+    o = np.argsort(a[:, 0]); rr = rel[o] - np.mean(rel[o])
+    ac = float(np.sum(rr[1:] * rr[:-1]) / (np.sum(rr * rr) + 1e-12)) if len(rr) > 3 else 0.0
+    unc = max(spread, noise)
+    if len(a) < 6:
+        word = f"no clear change ({pm(unc)}, only {len(a)} exposures)"
+    elif med / np.median(a[:, 2]) < 5:
+        word = f"no clear change ({pm(unc)}, faint)"
+    elif spread > max(3 * noise, 0.08) and ac > 0.3:
+        # a real change is coherent in time: exposures taken close together agree
+        word = f"varies by about {100 * (np.percentile(rel, 90) - np.percentile(rel, 10)) / 2:.0f}% ({pm(noise)})"
     elif spread > max(3 * noise, 0.08):
-        # a real change is coherent in time: exposures taken close together agree. Pure scatter (glare from a
-        # neighbour, a bad background) jumps from one exposure to the next, so check the lag-1 correlation.
-        o = np.argsort(a[:, 0]); r = rel[o] - np.mean(rel[o])
-        ac = float(np.sum(r[1:] * r[:-1]) / (np.sum(r * r) + 1e-12)) if len(r) > 3 else 0.0
-        if ac > 0.3:
-            word = f"varies by about {100 * (np.percentile(rel, 90) - np.percentile(rel, 10)) / 2:.0f}%"
-        else:
-            word = f"too noisy to tell (exposures scatter by ±{100 * spread:.0f}%)"
+        word = f"no clear change ({pm(spread)}, exposures scatter)"
     else:
-        word = f"steady (±{max(100 * spread, 1):.0f}%)"
-    return dict(pts=[[round(t, 3), round(float(r), 3)] for t, r in zip(a[:, 0], rel)], word=word)
+        word = f"steady ({pm(spread)})"
+    if wings:
+        word += ", rough: measured in the star's wings"
+    return dict(pts=[[round(t, 3), round(float(r), 3)] for t, r in zip(a[:, 0], rel)], word=word, sat=wings)
 
 
 def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None, dec0=None, epoch0=None):

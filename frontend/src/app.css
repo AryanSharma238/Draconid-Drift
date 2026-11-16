@@ -698,3 +698,45 @@ body{font-size:15px}
 
 .lab h2{color:#2e1a1f}
 #info{background:var(--bg2)!important}
+
+/* once the home screen is left, the hero never shows through again while the overlay fades */
+#app:not(.landing) #land .lhero,#app:not(.landing) #land .lcol,#app.side #land .lhero,#app.side #land .lcol{opacity:0!important;pointer-events:none!important}
+#app:not(.landing) #land .lhero,#app:not(.landing) #land .lcol{transition:none!important}
+#app.leaving-side #land .lside,#app.leaving-side #land .lctrl{opacity:0;transition:opacity .35s}
+#land .ldata{flex:0 0 auto}
+#land .ldata div{grid-template-columns:72px 1fr}
+#land .ldata dd{font-variant-numeric:tabular-nums;color:rgba(255,255,255,.85)}
+/* during the tour only Next and End tour can be pressed */
+#tourBlock{position:fixed;inset:0;z-index:3980;display:none}
+#app.touring #tourBlock{display:block}
+#tourBar{display:none}
+
+/* info panel: darker red headings, more room between sections */
+.blk h3,#info .blk h3{color:#7a434d;font-size:12.5px;font-weight:600;letter-spacing:.01em;margin-bottom:10px}
+#info{gap:0!important;padding:26px 28px!important}
+#info .head{padding-bottom:18px}
+#info .facts{padding:14px 0!important;margin-bottom:16px}
+#info .coord{margin-bottom:20px}
+#info .blk{padding:16px 0;border-top:1px solid rgba(255,255,255,.06)}
+#info .blk:first-of-type{border-top:0;padding-top:0}
+#info #timeBtn{margin:18px 0 6px}
+#info .lc{align-items:flex-start;line-height:1.45}
+#info .lc span{flex:1}
+#info .src{margin-top:12px}
+
+#about .cpick{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}
+#about .cbox{position:relative;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:rgba(255,255,255,.5)}
+#about .cbox input{font:500 15px var(--display);color:#fff;background:#1b1f24;border:1px solid rgba(255,255,255,.16);border-radius:5px;padding:11px 12px;outline:0}
+#about .cbox input:focus{border-color:#b98089}
+#about .csug{position:absolute;left:0;right:0;top:100%;margin:4px 0 0;padding:4px;list-style:none;background:#1b1f24;border:1px solid rgba(255,255,255,.14);border-radius:5px;z-index:5;max-height:320px;overflow:auto}
+#about .csug:empty{display:none}
+#about .csug li{padding:8px 10px;border-radius:4px;cursor:pointer}
+#about .csug li:hover{background:rgba(58,29,35,.8)}
+#about .csug b{display:block;color:#fff;font-weight:600;font-size:14.5px}#about .csug small{color:rgba(255,255,255,.5);font-size:12.5px}
+#about .cbtns{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+#about .copen{font:500 13.5px var(--display);color:#fff;background:#3a1d23;border:1px solid #4a242c;border-radius:5px;padding:8px 12px;cursor:pointer}
+#about .copen:hover{background:#4a242c}
+/* contents of How it works: one per line, top to bottom */
+#about .toc{flex-direction:column;flex-wrap:nowrap;gap:8px}
+#about .toc{align-items:flex-start;text-align:left}
+#about .toc{border:0!important;background:none!important;padding:0!important;margin:20px 0 10px}

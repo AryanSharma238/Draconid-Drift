@@ -308,7 +308,7 @@ def api_go(req: GoRequest) -> JSONResponse:
             _start_bands(payload, key)
         except Exception:
             pass
-        if payload.get("lc") and not payload["lc"].get("pts"):      # too bright for SPHEREx: ask NEOWISE alongside
+        if payload.get("lc") and (payload["lc"].get("sat") or not payload["lc"].get("pts")):      # too bright for SPHEREx: ask NEOWISE alongside
             try:
                 from drift.neowise import neowise_lc
                 _NEO[payload["name"]] = _NAME_EX.submit(neowise_lc, float(payload["ra"]), float(payload["dec"]),
@@ -359,6 +359,21 @@ def api_bands(req: BandsRequest) -> JSONResponse:
     except Exception:
         traceback.print_exc()
         return JSONResponse({"bands": [], "spectra": {}})
+
+
+class FactsRequest(BaseModel):
+    name: str
+    ra: float
+    dec: float
+
+
+@app.post("/api/stage/facts")
+def api_facts(req: FactsRequest) -> JSONResponse:
+    try:
+        from drift.facts import target_facts
+        return JSONResponse({"facts": target_facts(req.name, req.ra, req.dec, 0.05)})
+    except Exception:
+        return JSONResponse({"facts": {}})
 
 
 @app.get("/api/stage/library")

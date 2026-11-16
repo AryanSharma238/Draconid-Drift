@@ -39,7 +39,8 @@ for t in PRESETS.values():
 S = st.session_state
 S.setdefault("result", None)      # payload for the stage (or None while on the home sky)
 S.setdefault("error", None)
-S.setdefault("seen", None)        # nonce of the last request we handled
+S.setdefault("seen", None)
+S.setdefault("facts", {})       # facts looked up for the Compare page, by name        # nonce of the last request we handled
 
 STAGE_DIR = os.path.join(HERE, "data", "stage")
 
@@ -64,7 +65,7 @@ try:
     _library = dict(discoveries=_library["discoveries"][:80], library=_library["library"][:120])
 except Exception:
     _library = dict(discoveries=[], library=[])
-req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, library=_library, key="stage", default=None)
+req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, library=_library, facts=S.facts, key="stage", default=None)
 
 # Support deep linking via URL query parameters (?ra=...&dec=...&fov=...)
 qp = st.query_params
@@ -100,7 +101,7 @@ def _band_args(r, key):
 
 def _saturated(r):
     lc = r.get("lc")
-    return bool(lc) and not lc.get("pts")
+    return bool(lc) and (bool(lc.get("sat")) or not lc.get("pts"))
 
 
 def start_neowise(r):
@@ -169,6 +170,16 @@ if req and req.get("nonce") != S.seen and req.get("type") == "depth":
             import traceback
             traceback.print_exc()
             S.result = dict(r, depth=dict(objects=[], error="The distance catalogues did not answer. Try again in a moment."))
+    st.rerun()
+
+if req and req.get("nonce") != S.seen and req.get("type") == "facts":
+    S.seen = req["nonce"]
+    try:
+        from drift.facts import target_facts
+        f = target_facts(str(req["name"]), float(req["ra"]), float(req["dec"]), 0.05)
+    except Exception:
+        f = {}
+    S.facts = dict(list(S.facts.items())[-30:], **{str(req["name"]): f})
     st.rerun()
 
 if req and req.get("nonce") != S.seen and req.get("type") == "bands":

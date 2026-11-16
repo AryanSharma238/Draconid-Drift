@@ -212,7 +212,7 @@ function bindSky() {
   const rect = () => clip.getBoundingClientRect();
   clip.addEventListener("pointerdown", () => { smoothId++; smoothCv.classList.remove("on"); }, true);
   window.addEventListener("pointerup", () => { if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 90); });
-  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about") && !app.classList.contains("landing");
+  const homeOk = () => (view === "home" || view === "leaving") && !busy && !app.classList.contains("searching") && !app.classList.contains("about");
   // a short hint that follows the cursor the first few seconds it moves over the sky
   let tipUntil = 0, tipDone = false;
   window.addEventListener("pointermove", e => {
@@ -223,22 +223,24 @@ function bindSky() {
   });
   let wt = 0;
   clip.addEventListener("wheel", e => {
-    if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); wake();
+    if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); leaveLanding(); wake();
     const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
     const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
     const r = rect(), before = sky.pix2world(e.clientX - r.left, e.clientY - r.top);
     sky.a.setFoV(f); fitBlend();
     const after = sky.pix2world(e.clientX - r.left, e.clientY - r.top), c = sky.center();
     if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
- clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110); }, { capture: true, passive: false });
+    clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110);
+  }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  // Right-click drag: draw a curved-corner rectangle selection
+  // Right-click drag: draw a curved-corner space-limited rectangle selection
   let sel = null;
   const stop = e => { e.stopPropagation(); e.preventDefault(); };
   const begin = e => {
-    if (e.button !== 2) { if (homeOk() && e.button === 0) wake(); return; }
+    if (e.button !== 2) { if (homeOk() && e.button === 0) { leaveLanding(); wake(); } return; }
     stop(e); if (!homeOk() || sel) return;
+    leaveLanding();
     wake(); const r = rect();
     const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
     sel = { x0, y0, x: x0, y: y0, w: 0, h: 0 };
@@ -261,10 +263,17 @@ function bindSky() {
     if (!sel) return; stop(e);
     const r = rect();
     const currX = e.clientX - r.left, currY = e.clientY - r.top;
-    const x = Math.min(sel.x0, currX);
-    const y = Math.min(sel.y0, currY);
-    const w = Math.max(8, Math.abs(currX - sel.x0));
-    const h = Math.max(8, Math.abs(currY - sel.y0));
+    
+    // Space-limited: bounds the rectangle so it stays focused on a celestial patch
+    const maxBox = Math.min(Math.min(sky.W, sky.H) * 0.45, 240);
+    const rawW = Math.abs(currX - sel.x0);
+    const rawH = Math.abs(currY - sel.y0);
+    const w = Math.max(8, Math.min(maxBox, rawW));
+    const h = Math.max(8, Math.min(maxBox, rawH));
+    
+    const x = currX >= sel.x0 ? sel.x0 : sel.x0 - w;
+    const y = currY >= sel.y0 ? sel.y0 : sel.y0 - h;
+    
     sel.x = x;
     sel.y = y;
     sel.w = w;
@@ -273,30 +282,31 @@ function bindSky() {
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
   window.addEventListener("mouseup", e => { if (sel && e.button === 2) stop(e); }, true);
-  window.addEventListener("pointerup", async e => {
+  window.addEventListener("pointerup", e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
-    if (s0.w < 12 || s0.h < 12) { selEl.classList.remove("on"); return; }
+    leaveLanding();
+    if (s0.w < 10 || s0.h < 10) { selEl.classList.remove("on"); return; }
     const x = s0.x, y = s0.y, w = s0.w, h = s0.h;
     const cx = x + w / 2, cy = y + h / 2;
 
     const c = sky.pix2world(cx, cy);
+    if (!c) { selEl.classList.remove("on"); return; }
     const topPt = sky.pix2world(cx, y);
     const botPt = sky.pix2world(cx, y + h);
-    if (!c || !topPt || !botPt) { selEl.classList.remove("on"); return toast("Keep the selection rectangle inside the map."); }
 
-    // Height of selected rectangular region on the sky in arcseconds
-    const side = sepDeg(topPt, botPt) * 3600;
-    if (side > 7200) { selEl.classList.remove("on"); return toast(`That rectangle is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° across. Scroll to zoom in and pick up to 2°.`); }
+    // Height of selected rectangular region on the sky in arcseconds, clamped to observation limits
+    const side = (topPt && botPt) ? sepDeg(topPt, botPt) * 3600 : 300;
+    const targetFov = Math.min(1800, Math.max(120, side));
 
     // Default target: exact middle of the rectangle
     let targetRa = c[0], targetDec = c[1];
     let starFound = false;
     let targetName = `${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
 
-    const degRadius = Math.max(side / 7200, 0.005);
+    const degRadius = Math.max(side / 7200, 0.015);
     
-    // 1) First check known catalog objects within the rectangular region
+    // Check known catalog objects within the rectangular region synchronously (0ms)
     const allPresets = presetItems();
     const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
     let bestObj = null, bestDist = degRadius;
@@ -314,37 +324,7 @@ function bindSky() {
       starFound = true;
     }
 
-    // 2) If not in catalog, sample the 2MASS cutout to find the brightest star/source inside the rectangle
-    if (!starFound) {
-      try {
-        const sw = 48, sh = 48;
-        const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
-        const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
-        let maxB = 0, bestX = sw / 2, bestY = sh / 2;
-        let totalFlux = 0, fluxX = 0, fluxY = 0;
-        for (let py = 0; py < sh; py++) {
-          for (let px = 0; px < sw; px++) {
-            const idx = (py * sw + px) * 4;
-            const b = data[idx] + data[idx + 1] + data[idx + 2];
-            if (b > maxB) { maxB = b; bestX = px; bestY = py; }
-            if (b > 50) { totalFlux += b; fluxX += px * b; fluxY += py * b; }
-          }
-        }
-        if (maxB > 65) {
-          const cX = totalFlux > 0 ? fluxX / totalFlux : bestX;
-          const cY = totalFlux > 0 ? fluxY / totalFlux : bestY;
-          const fracX = (cX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (cY + 0.5)) / sh;
-          const degW = side / 3600;
-          const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
-          targetRa = ((c[0] + dRa) % 360 + 360) % 360;
-          targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-          targetName = `${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°`;
-          starFound = true;
-        }
-      } catch (e) {}
-    }
-
-    // 3) Match the selection rectangle towards the exact center of the star it identifies
+    // Match the selection rectangle towards the exact center of the star it identifies
     if (starFound) {
       const starPix = sky.world2pix(targetRa, targetDec);
       if (starPix && Number.isFinite(starPix[0]) && Number.isFinite(starPix[1])) {
@@ -355,13 +335,11 @@ function bindSky() {
     }
     // If no star, it points to the exact middle of the rectangle (c[0], c[1])
 
-    setTimeout(() => {
-      selEl.classList.remove("snapping");
-      selEl.classList.add("fading");
-      setTimeout(() => { selEl.classList.remove("on", "fading"); }, 650);
-    }, starFound ? 300 : 100);
+    selEl.classList.add("fading");
+    setTimeout(() => { selEl.classList.remove("on", "snapping", "fading"); }, 500);
 
-    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+    // Start transition IMMEDIATELY upon release! Zero network wait!
+    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: targetFov });
   }, true);
 }
 
@@ -505,6 +483,7 @@ function makeOverlay() {
 
 async function go(item) {
   leaveLanding();
+  if (view === "home") busy = false;
   if (busy && view !== "view") return;
   if (app.classList.contains("deep")) exitDepth();
   closeSearch(true); closeAbout();

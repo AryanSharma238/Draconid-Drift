@@ -206,15 +206,15 @@ def build_stage(res, name, ra, dec, pmra=0.0, pmdec=0.0, epoch=2000.0, ra0=None,
     r00 = float(ra0) + float(pmra) * (2000.0 - float(epoch0)) / 3.6e6 / max(np.cos(np.radians(d00)), 1e-6)
     ff = ex.submit(target_facts, name, r00, d00, float(nx * pixscale(cube) / 3600.0))
     try:
-        movers = fm.result(timeout=3.0)
+        movers = fm.result(timeout=6.0)
     except Exception:
         movers = []
     try:
-        objects = fo.result(timeout=4.0 if nx * pixscale(cube) <= 1800 else 8.0)   # wide fields hold far more catalogue rows
+        objects = fo.result(timeout=10.0 if nx * pixscale(cube) <= 1800 else 16.0)   # wide fields hold far more catalogue rows
     except Exception:
         objects = []
     try:
-        facts = ff.result(timeout=3.0)
+        facts = ff.result(timeout=6.0)
     except Exception:
         facts = {}
     ex.shutdown(wait=False)

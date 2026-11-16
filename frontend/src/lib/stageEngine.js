@@ -1,103 +1,46 @@
-import { Sky, unit, radec, slerp } from "./sky.js";
+import { Sky, unit, radec, slerp, MAP_URL } from "./sky.js";
 import { renderCutout, SURVEYS } from "./healpix.js";
 import * as intro from "./intro.js";
 import * as depth from "./depth.js";
 
 export function mountStage() {
+
 /* ---------------------------------------------------------------- FastAPI Stage API bridge */
 let args = { presets: [], mid: 2026.3, result: null, error: null };
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 async function emit(value) {
-  if (value.type === "home") {
-    args.result = null;
-    args.error = null;
-    return;
-  }
+  if (value.type === "home") { args.result = null; args.error = null; return; }
   if (value.type === "go") {
     try {
-      const resp = await fetch("/api/stage/go", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(value),
-      });
-      const data = await resp.json();
+      const resp = await post("/api/stage/go", value), data = await resp.json();
       if (!req || req.nonce !== value.nonce) return;
-      if (data.error || !resp.ok) {
-        args.error = data.error || `Server error (${resp.status})`;
-        args.result = null;
-      } else {
-        args.error = null;
-        args.result = data;
-      }
-      onArgs();
+      if (data.error || !resp.ok) { args.error = data.error || `Server error (${resp.status})`; args.result = null; }
+      else { args.error = null; args.result = data; }
     } catch (err) {
       if (!req || req.nonce !== value.nonce) return;
-      args.error = "Unable to reach the Draconid Drift server.";
-      args.result = null;
-      onArgs();
+      args.error = "Unable to reach the Draconid Drift server."; args.result = null;
     }
-    return;
+    onArgs(); return;
   }
+  const r = last_res || args.result;
+  if (!r) return;
   if (value.type === "bands") {
-    const r = last_res || args.result;
-    if (!r) return;
+    let extra = { bands: [], spectra: {} };
     try {
-      const resp = await fetch("/api/stage/bands", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          key: value.key || null,
-          name: r.name,
-          ra: r.ra,
-          dec: r.dec,
-          pmra: r.pmra || 0,
-          pmdec: r.pmdec || 0,
-          epoch: r.epoch,
-          ra_c: r.ra_c,
-          dec_c: r.dec_c,
-          field_deg: r.field_deg,
-          detector: r.detector || "SPHEREx-D3",
-          objects: r.objects || [],
-        }),
-      });
-      const b = await resp.json();
-      if (args.result && args.result.nonce === value.for) {
-        args.result = Object.assign({}, args.result, { bands: b.bands || [], spectra: b.spectra || {} });
-        onArgs();
-      }
-    } catch (err) {
-      if (args.result && args.result.nonce === value.for) {
-        args.result = Object.assign({}, args.result, { bands: [], spectra: {} });
-        onArgs();
-      }
-    }
+      const b = await (await post("/api/stage/bands", { key: value.key || null, name: r.name, ra: r.ra, dec: r.dec, pmra: r.pmra || 0,
+        pmdec: r.pmdec || 0, epoch: r.epoch, ra_c: r.ra_c, dec_c: r.dec_c, field_deg: r.field_deg, detector: r.detector || "SPHEREx-D3",
+        objects: r.objects || [] })).json();
+      extra = { bands: b.bands || [], spectra: b.spectra || {} };
+      if (b.lc) extra.lc = b.lc;
+    } catch (err) {}
+    if (args.result && args.result.nonce === value.for) { args.result = Object.assign({}, args.result, extra); onArgs(); }
     return;
   }
   if (value.type === "depth") {
-    const r = last_res || args.result;
-    if (!r) return;
-    try {
-      const resp = await fetch("/api/stage/depth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ra_c: r.ra_c,
-          dec_c: r.dec_c,
-          field_deg: r.field_deg,
-        }),
-      });
-      const d = await resp.json();
-      if (args.result && args.result.nonce === value.for) {
-        args.result = Object.assign({}, args.result, { depth: d.depth });
-        onArgs();
-      }
-    } catch (err) {
-      if (args.result && args.result.nonce === value.for) {
-        args.result = Object.assign({}, args.result, {
-          depth: { objects: [], error: "The distance catalogues did not answer. Try again in a moment." },
-        });
-        onArgs();
-      }
-    }
+    let d;
+    try { d = (await (await post("/api/stage/depth", { ra_c: r.ra_c, dec_c: r.dec_c, field_deg: r.field_deg })).json()).depth; }
+    catch (err) { d = { objects: [], error: "The distance catalogues did not answer. Try again in a moment." }; }
+    if (args.result && args.result.nonce === value.for) { args.result = Object.assign({}, args.result, { depth: d }); onArgs(); }
   }
 }
 
@@ -159,37 +102,38 @@ const OTYPE = { "*": "Star", "**": "Double star", "BY*": "Star", "Mi*": "Mira va
 const smoothCv = document.createElement("canvas"); smoothCv.id = "smooth"; inner.appendChild(smoothCv);
 let smoothId = 0;
 async function refreshSmooth() {
-  const my = ++smoothId;
-  if (view !== "home" || sky.fov() > 4.5) {
-    smoothCv.classList.remove("on");
-    return;
-  }
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const [r, d] = sky.center(), w = Math.min(2048, Math.round(sky.W * dpr)), h = Math.round(w * sky.H / sky.W);
+  const my = ++smoothId; smoothCv.classList.remove("on");
+  if (view !== "home" || sky.fov() > 2) return;
+  const [r, d] = sky.center(), w = Math.round(sky.W / 1.5), h = Math.round(sky.H / 1.5);
+  const black = (sky.black ?? 18) / 255;
   try {
-    const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, { gain: 1.15, gamma: 0.94, black: 0.02 });
+    const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, {});
     if (my !== smoothId || view !== "home") return;
-    smoothCv.width = w; smoothCv.height = h;
-    smoothCv.getContext("2d").drawImage(c, 0, 0);
-    smoothCv.classList.add("on");
+    smoothCv.width = w; smoothCv.height = h; smoothCv.getContext("2d").drawImage(c, 0, 0); smoothCv.classList.add("on");
   } catch (e) {}
 }
-async function autoCuts() { return; }
-let spinning = false;
+async function autoCuts() { return;
+  if (sky.fov() > 60) return sky.setBlack(18);
+  const [r, d] = sky.center();
+  try {
+    const c = await renderCutout(SURVEYS.spherex(63), r, d, sky.fov() * 0.8, 24, 16);
+    const px = c.getContext("2d").getImageData(0, 0, 24, 16).data, v = [];
+    for (let i = 0; i < px.length; i += 4) v.push((px[i] + px[i + 1] + px[i + 2]) / 3);
+    v.sort((a, b) => a - b);
+    sky.setBlack(v[v.length >> 1] + 6); sky.black = v[v.length >> 1] + 6;
+  } catch (e) {}
+}
+let spinning = false, SIDE = false, SY = 1, curMap = "tmass";
 function homeView() { return [0, 0, sky.homeFov()]; }
 function fitBlend() {                              // cover exactly the area outside the all-sky ellipse (measured, not assumed)
-  if (!sky || sky.fov() < 60) return;
-  const W = sky.W, H = sky.H;
-  if (!W || !H) return;
-  const edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
+  const W = sky.W, H = sky.H, edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
     let lo = 0, hi = Math.hypot(W, H);
-    for (let i = 0; i < 18; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
+    for (let i = 0; i < 22; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
     return lo;
   };
   const w = edge(1, 0) - 0.5, h = edge(0, 1) - 0.5;
-  if (w <= 30 || h <= 30 || !isFinite(w) || !isFinite(h)) return;
-  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #0d0f13 100%)`;
-  const b = $("blend"); if (b) b.style.webkitMaskImage = b.style.maskImage = m;
+  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #000 100%)`;
+  const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
 }
 async function boot() {
   loadCatalog();
@@ -210,8 +154,8 @@ const sepDeg = (a, b) => { const u = unit(a[0], a[1]), v = unit(b[0], b[1]); ret
 function bindSky() {
   const rect = () => clip.getBoundingClientRect();
   clip.addEventListener("pointerdown", () => { smoothId++; smoothCv.classList.remove("on"); }, true);
-  window.addEventListener("pointerup", () => { if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 90); });
-  const homeOk = () => (view === "home" || view === "leaving") && !busy && !app.classList.contains("searching") && !app.classList.contains("about");
+  window.addEventListener("pointerup", () => { if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 200); });
+  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about");
   // a short hint that follows the cursor the first few seconds it moves over the sky
   let tipUntil = 0, tipDone = false;
   window.addEventListener("pointermove", e => {
@@ -221,239 +165,98 @@ function bindSky() {
     tipEl.style.transform = `translate(${e.clientX + 18}px,${e.clientY + 20}px)`; tipEl.classList.add("on");
   });
   let wt = 0;
-  let zoomTargetFov = null;
-  let zoomAnimId = null;
-  let anchorX = 0, anchorY = 0;
-
-  function stepZoomLoop() {
-    if (zoomTargetFov === null) { zoomAnimId = null; return; }
-    const curFov = sky.fov();
-    const diff = zoomTargetFov - curFov;
-    if (Math.abs(diff) < 0.0015 * curFov || Math.abs(diff) < 0.0001) {
-      sky.a.setFoV(zoomTargetFov);
-      zoomAnimId = null;
-      zoomTargetFov = null;
-      if (sky.fov() > 60) fitBlend();
-      clearTimeout(wt);
-      wt = setTimeout(() => { refreshSmooth(); }, 120);
-      return;
-    }
-    // Buttery smooth exponential damping for luxurious cinematic zooming
-    const nextFov = curFov + diff * 0.30;
-    const r = rect(), before = sky.pix2world(anchorX - r.left, anchorY - r.top);
-    sky.a.setFoV(nextFov);
-    if (before && nextFov < 60) {
-      const after = sky.pix2world(anchorX - r.left, anchorY - r.top);
-      const c = sky.center();
-      if (after) {
-        sky.a.gotoRaDec(
-          c[0] + (before[0] - after[0]),
-          Math.max(-90, Math.min(90, c[1] + before[1] - after[1]))
-        );
-      }
-    }
-    if (nextFov > 60) fitBlend();
-    zoomAnimId = requestAnimationFrame(stepZoomLoop);
-  }
-
   clip.addEventListener("wheel", e => {
-    if (!homeOk()) return;
-    e.preventDefault(); e.stopPropagation(); leaveLanding(); wake();
-    anchorX = e.clientX; anchorY = e.clientY;
-    const dy = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaY;
-    const curBase = zoomTargetFov !== null ? zoomTargetFov : sky.fov();
-    const factor = Math.exp(dy * 0.0028);
-    zoomTargetFov = Math.min(sky.homeFov(), Math.max(0.015, curBase * factor));
-    if (!zoomAnimId) {
-      zoomAnimId = requestAnimationFrame(stepZoomLoop);
-    }
-  }, { capture: true, passive: false });
+    if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); wake();
+    const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+    const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
+    const r = rect(), before = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY);
+    sky.a.setFoV(f); fitBlend();
+    const after = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY), c = sky.center();
+    if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
+ clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 300); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  // Right-click drag: draw a curved-corner space-limited rectangle selection
+  // right button: draw an area. Swallowed before Aladin sees it (Aladin uses right-drag for contrast).
   let sel = null;
   const stop = e => { e.stopPropagation(); e.preventDefault(); };
   const begin = e => {
-    if (e.button !== 2) { if (homeOk() && e.button === 0) { leaveLanding(); wake(); } return; }
+    if (e.button !== 2) { if (homeOk() && e.button === 0) wake(); return; }
     stop(e); if (!homeOk() || sel) return;
-    leaveLanding();
     wake(); const r = rect();
-    const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
-    sel = { x0, y0, x: x0, y: y0, w: 0, h: 0 };
-    drawSel(); selEl.classList.remove("fading", "snapping"); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
+    sel = { x0: e.clientX - r.left, y0: (e.clientY - r.top) / SY, x1: e.clientX - r.left, y1: (e.clientY - r.top) / SY };
+    drawSel(); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
+    app.classList.add("picking");                                  // the home list steps aside while you pick an area
   };
   clip.addEventListener("pointerdown", begin, true);
   clip.addEventListener("mousedown", e => { if (e.button === 2) stop(e); }, true);
-
   const drawSel = () => {
-    if (!sel) return;
-    Object.assign(selEl.style, {
-      left: `${Math.round(sel.x)}px`,
-      top: `${Math.round(sel.y)}px`,
-      width: `${Math.round(sel.w)}px`,
-      height: `${Math.round(sel.h)}px`
-    });
+    const r0 = rect(), l = Math.min(sel.x0, sel.x1) + r0.left, t = Math.min(sel.y0, sel.y1) * SY + r0.top;   // the map may be shifted and stretched on the home screen
+    Object.assign(selEl.style, { left: l + "px", top: t + "px", width: Math.abs(sel.x1 - sel.x0) + "px", height: Math.abs(sel.y1 - sel.y0) * SY + "px" });
   };
-
-  function findBrightestPixel(bx, by, bw, bh) {
-    const canvases = [smoothCv, ...skyEl.querySelectorAll("canvas")];
-    for (const cv of canvases) {
-      if (!cv || !cv.width || !cv.height) continue;
-      try {
-        const ctx = cv.getContext("2d", { willReadFrequently: true });
-        if (ctx) {
-          const rect = cv.getBoundingClientRect();
-          const r0 = clip.getBoundingClientRect();
-          const scaleX = cv.width / (rect.width || cv.clientWidth || 1);
-          const scaleY = cv.height / (rect.height || cv.clientHeight || 1);
-          const sx = Math.max(0, Math.floor((bx - (rect.left - r0.left)) * scaleX));
-          const sy = Math.max(0, Math.floor((by - (rect.top - r0.top)) * scaleY));
-          const sw = Math.min(cv.width - sx, Math.floor(bw * scaleX));
-          const sh = Math.min(cv.height - sy, Math.floor(bh * scaleY));
-          if (sw > 3 && sh > 3) {
-            const img = ctx.getImageData(sx, sy, sw, sh).data;
-            let maxL = 0, bestX = -1, bestY = -1;
-            for (let j = 0; j < sh; j += 2) {
-              for (let i = 0; i < sw; i += 2) {
-                const idx = (j * sw + i) * 4;
-                const lum = img[idx] * 0.299 + img[idx + 1] * 0.587 + img[idx + 2] * 0.114;
-                if (lum > maxL) { maxL = lum; bestX = i; bestY = j; }
-              }
-            }
-            if (maxL > 35 && bestX >= 0) {
-              return {
-                screenX: bx + bestX / scaleX,
-                screenY: by + bestY / scaleY,
-                lum: maxL
-              };
-            }
-          }
-        }
-      } catch (e) {}
-    }
-    return null;
-  }
-
   window.addEventListener("pointermove", e => {
     if (!sel) return; stop(e);
-    const r = rect();
-    const currX = e.clientX - r.left, currY = e.clientY - r.top;
-    
-    // Degrees per pixel across the sky viewport
-    const degPerPx = (sky.fov && sky.W) ? (sky.fov() / sky.W) : 0.05;
-    // Clamped so the rectangle cannot exceed 2.5 degrees on the sky,
-    // but when zoomed in, it can expand comfortably across up to 92% of the screen.
-    const MAX_ANGULAR_DEG = 2.5;
-    const maxPxFromAngle = MAX_ANGULAR_DEG / Math.max(0.000001, degPerPx);
-    const maxBoxW = Math.max(24, Math.min(sky.W * 0.92, maxPxFromAngle));
-    const maxBoxH = Math.max(24, Math.min(sky.H * 0.92, maxPxFromAngle));
-
-    const rawW = Math.abs(currX - sel.x0);
-    const rawH = Math.abs(currY - sel.y0);
-    const w = Math.max(8, Math.min(maxBoxW, rawW));
-    const h = Math.max(8, Math.min(maxBoxH, rawH));
-    
-    const x = currX >= sel.x0 ? sel.x0 : sel.x0 - w;
-    const y = currY >= sel.y0 ? sel.y0 : sel.y0 - h;
-    
-    sel.x = x;
-    sel.y = y;
-    sel.w = w;
-    sel.h = h;
-    drawSel();
+    const r = rect(), A = panelA(), dx = e.clientX - r.left - sel.x0, dy = (e.clientY - r.top) / SY - sel.y0;
+    const w = Math.max(Math.abs(dx), Math.abs(dy) / A);          // locked to the panels' tall shape, like a photo crop
+    sel.x1 = sel.x0 + Math.sign(dx || 1) * w; sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A; drawSel();
   }, true);
   window.addEventListener("mousemove", e => { if (sel) stop(e); }, true);
   window.addEventListener("mouseup", e => { if (sel && e.button === 2) stop(e); }, true);
-  window.addEventListener("pointerup", e => {
+  window.addEventListener("pointerup", async e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
-    leaveLanding();
-    if (s0.w < 10 || s0.h < 10) { selEl.classList.remove("on"); return; }
-    const x = s0.x, y = s0.y, w = s0.w, h = s0.h;
-    const cx = x + w / 2, cy = y + h / 2;
-
-    const c = sky.pix2world(cx, cy);
-    if (!c) { selEl.classList.remove("on"); return; }
-    const topPt = sky.pix2world(cx, y);
-    const botPt = sky.pix2world(cx, y + h);
-
-    // Height of selected rectangular region on the sky in arcseconds, clamped to observation limits
-    const side = (topPt && botPt) ? sepDeg(topPt, botPt) * 3600 : 300;
-    const targetFov = Math.min(1800, Math.max(120, side));
-
-    // Default target: exact middle of the rectangle
-    let targetRa = c[0], targetDec = c[1];
-    let starFound = false;
-    let targetName = `${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
-
-    const degRadius = Math.max(side / 7200, 0.02);
+    setTimeout(() => { if (!busy) app.classList.remove("picking"); }, 400);
+    const l = Math.min(s0.x0, s0.x1), r_ = Math.max(s0.x0, s0.x1), t = Math.min(s0.y0, s0.y1), b = Math.max(s0.y0, s0.y1);
+    const cx = (l + r_) / 2, cy = (t + b) / 2;
+    if (r_ - l < 4 || b - t < 4) { selEl.classList.remove("on"); return; }
+    const c = sky.pix2world(cx, cy), L = sky.pix2world(l, cy), R = sky.pix2world(r_, cy), T = sky.pix2world(cx, t), B = sky.pix2world(cx, b);
+    if (!c || !L || !R || !T || !B) { selEl.classList.remove("on"); return toast("Keep the area inside the map."); }
+    // the field is the square that covers the whole highlighted area, centred on it
+    const side = sepDeg(T, B) * 3600;                                // the panels show this height; the width is what fits beside it
+    if (side > 18000) { selEl.classList.remove("on"); return toast(`That area is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° wide. Scroll to zoom in and pick one up to 5°.`); }
     
-    // Check known catalog objects within the rectangular region:
-    // Pick the brightest / most prominent object covered by the rectangle!
-    const allPresets = presetItems();
+  // Auto-snap to the brightest star / object in the selected box by sampling HiPS image pixels
+  let targetRa = c[0], targetDec = c[1], targetName = "Selected area";
+  try {
+    const sw = 48, sh = 48;
+    const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+    const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+    let maxB = 0, bestX = sw / 2, bestY = sh / 2;
+    for (let py = 0; py < sh; py++) {
+      for (let px = 0; px < sw; px++) {
+        const idx = (py * sw + px) * 4;
+        const b = data[idx] + data[idx + 1] + data[idx + 2];
+        if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+      }
+    }
+    // If a clear star peak was found in the box, latch dead-center onto its brightest peak
+    if (maxB > 60) {
+      const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
+      const degW = side / 3600;
+      const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
+      targetRa = ((c[0] + dRa) % 360 + 360) % 360;
+      targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+    }
+  } catch (e) {
+    // Fallback to catalog or center if cutout sampling fails
+    const boxRadiusDeg = Math.max(side / 7200, 0.08);
     const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
-    const candidates = [];
-
-    for (const obj of [...allPresets, ...catList]) {
-      const d = sepDeg([obj.ra, obj.dec], c);
-      if (d <= degRadius * 1.35) {
-        const pt = sky.world2pix(obj.ra, obj.dec);
-        if (pt && pt[0] >= x - 8 && pt[0] <= x + w + 8 && pt[1] >= y - 8 && pt[1] <= y + h + 8) {
-          // Inside rectangle: score by astronomical prominence / brightness (citations, preset, size) & centrality
-          const isPreset = obj.key && obj.key !== "custom";
-          const citations = obj.nb || 0;
-          const angularSize = obj.size || 0;
-          const distRatio = Math.max(0, 1 - d / degRadius);
-          const score = (isPreset ? 1000000 : 0) + (citations * 15) + (angularSize * 8) + (distRatio * 50);
-          candidates.push({ obj, score, pt, d });
-        }
+    if (catList && catList.length) {
+      let best = null, bestDist = boxRadiusDeg;
+      for (const obj of catList) {
+        const d = sepDeg([obj.ra, obj.dec], c);
+        if (d < bestDist) { bestDist = d; best = obj; }
       }
+      if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
     }
-
-    if (candidates.length) {
-      candidates.sort((a, b) => b.score - a.score);
-      const best = candidates[0].obj;
-      targetRa = best.ra;
-      targetDec = best.dec;
-      targetName = best.name;
-      starFound = true;
-    } else {
-      // If not in catalog, search optical pixels within rectangle to lock onto the brightest star
-      const brightPixel = findBrightestPixel(x, y, w, h);
-      if (brightPixel) {
-        const starCoord = sky.pix2world(brightPixel.screenX, brightPixel.screenY);
-        if (starCoord && Number.isFinite(starCoord[0]) && Number.isFinite(starCoord[1])) {
-          targetRa = starCoord[0];
-          targetDec = starCoord[1];
-          targetName = `Star (${starCoord[0].toFixed(2)}°, ${starCoord[1] >= 0 ? "+" : ""}${starCoord[1].toFixed(2)}°)`;
-          starFound = true;
-        }
-      }
-    }
-
-    // Match the selection rectangle towards the exact center of the star it identifies
-    if (starFound) {
-      const starPix = sky.world2pix(targetRa, targetDec);
-      if (starPix && Number.isFinite(starPix[0]) && Number.isFinite(starPix[1])) {
-        selEl.classList.add("snapping");
-        selEl.style.left = `${Math.round(starPix[0] - w / 2)}px`;
-        selEl.style.top = `${Math.round(starPix[1] - h / 2)}px`;
-      }
-    }
-    // If no star found, it points to the exact middle of the rectangle (c[0], c[1])
-
-    selEl.classList.add("fading");
-    setTimeout(() => { selEl.classList.remove("on", "snapping", "fading"); }, 500);
-
-    // Start transition IMMEDIATELY upon release! Zero network wait!
-    go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: targetFov });
-  }, true);
+  }
+  go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
+}, true);
 }
 
 /* ---------------------------------------------------------------- flight */
 const panelA = () => { const r = $("pSpx").getBoundingClientRect(); return r.width ? r.height / r.width : 1.4; };
 // width of the field on screen at the end of the flight; the panel window (width x width*a) must fit inside the viewport
-const ENDFOV = () => Math.max(1.8, Math.min(3.2, req.fieldDeg * sky.W / (SF() * panelA()) * 5.0));   // comfortable stellar field settling on the star
+const ENDFOV = () => req.fieldDeg * sky.W / (SF() * panelA());   // sky width so the field spans the panel's height
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
@@ -472,113 +275,38 @@ function centreFor(t, off) {                         // centre that puts the tar
   const ra = a0 + Math.atan2(xi * sc, rho * Math.cos(d0) * cc - eta * Math.sin(d0) * sc);
   return [((ra / R) % 360 + 360) % 360, dec / R];
 }
-/* ---------------------------------------------------------------- target lock-on reticle & cinematic spaceflight */
-const warpCv = $("warpCv"), beaconEl = $("beacon");
-const warpCtx = warpCv ? warpCv.getContext("2d") : null;
-let lastTargetScreen = null;
-
-function updateLockAndWarp(ra, dec, t, label) {
-  const W = sky.W || window.innerWidth, H = sky.H || window.innerHeight;
-  let cx = W / 2, cy = H / 2, onScreen = false;
-  try {
-    const p = sky.world2pix(ra, dec);
-    if (p && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[0] > -120 && p[0] < W + 120 && p[1] > -120 && p[1] < H + 120) {
-      cx = p[0]; cy = p[1]; onScreen = true;
-    }
-  } catch (e) {}
-  lastTargetScreen = [cx, cy];
-
-  if (beaconEl) {
-    beaconEl.style.left = `${cx}px`;
-    beaconEl.style.top = `${cy}px`;
-
-    // Stage 1: Pan & Track (0.0 to 0.45)
-    // Stage 2: Identify & Lock (0.45 to 0.70)
-    // Stage 3: High-speed Zoom dive (0.70 to 1.0)
-    let opacity = 0;
-    if (onScreen) {
-      opacity = 1;
-    } else if (t > 0.25) {
-      opacity = clamp01((t - 0.25) * 4);
-    }
-    beaconEl.style.opacity = String(opacity);
-
-    const ring = beaconEl.querySelector(".lock-ring");
-    if (ring) {
-      // Reticle shrinks into a sharp precise lock as camera aligns
-      let scale = 1.6;
-      if (t < 0.45) {
-        scale = 1.6 - 0.4 * smooth(t / 0.45);
-      } else if (t < 0.75) {
-        scale = 1.2 - 0.2 * smooth((t - 0.45) / 0.3);
-      } else {
-        scale = 1.0;
-      }
-      ring.style.transform = `scale(${scale.toFixed(3)})`;
-    }
-
-    const lab = beaconEl.querySelector(".lock-label");
-    if (lab) {
-      // Display clean coordinates or name in plain yellow, no "LOCKED", no "TARGETING", no gradients
-      lab.textContent = label || `${ra.toFixed(2)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(2)}°`;
-    }
-  }
-}
-
-function clearLockAndWarp() {
-  if (warpCv && warpCtx) {
-    warpCv.classList.remove("on");
-    warpCtx.clearRect(0, 0, warpCv.width, warpCv.height);
-  }
-  if (beaconEl) {
-    beaconEl.style.left = "50%";
-    beaconEl.style.top = "50%";
-    beaconEl.style.opacity = "";
-    const ring = beaconEl.querySelector(".lock-ring");
-    if (ring) ring.style.transform = "";
-  }
-}
-
-async function flyTo(ra, dec, fov, dur, label = "") {
-  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
-  const f0 = sky.fov();
-  const lnF0 = Math.log(f0), lnF1 = Math.log(fov);
-  
-  // Quintic smootherstep for seamless, cinematic camera pan (continuous velocity and acceleration, zero jerk)
-  const qsmooth = t => t * t * t * (t * (t * 6 - 15) + 10);
-  
+async function flyTo(ra, dec, fov, dur) {
+  const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
+  const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
+  const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
+  const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
+  const kA = visible ? startFrac : OFF;
+  const tA = visible ? 0 : 0.5;                     // share of the time spent turning the globe
+    const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));   // wide enough to see where we are going
+  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));    // phase 1 ends halfway (in zoom) between the wide view and the target
+  const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
   await tween(dur, t => {
-    // Decoupled pan and zoom: pan tracks smoothly while zoom glides at a gentle, lighter pace in first second
-    const p_pan = t * t * (3 - 2 * t);
-    const p_zoom = t < 0.5 ? 2 * Math.pow(t, 2.6) : 1 - Math.pow(2 - 2 * t, 2.6) / 2;
-    // Smooth spherical slerp camera pan directly toward target
-    const [r, d] = radec(slerp(u0, u1, p_pan));
-    // Gentle progressive zoom settling softly at the star
-    const curFov = Math.exp(lnF0 + (lnF1 - lnF0) * p_zoom);
-    sky.set(r, d, curFov);
-    
-    updateLockAndWarp(ra, dec, t, label);
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.45) / 0.55)));
+    if (t < tA) {                                    // phase 1: ease out to a wide view, turn, then come back in
+      const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
+      const p = ss(clamp01((q - 0.12) / 0.88)), c = radec(slerp(u0, uA, p));          // the globe starts turning just after the zoom-out begins
+      const out = ss(clamp01(q / 0.45));                                               // ~1.7 s to widen, not a jump
+      const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
+      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.45) / 0.55)));
+      const f = q < 0.45 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
+      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
+    } else {                                         // phase 2: zoom in, the target glides diagonally to the centre
+      const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
+      const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
+      const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
+      sky.set(c[0], c[1], f);
+    }
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.88) / 0.12)));
   });
   sky.set(ra, dec, fov);
-  updateLockAndWarp(ra, dec, 1, label);
-  if (warpCv) warpCv.classList.remove("on");
 }
-async function flyHome(ra, dec, fov, dur) {         // cinematic pull-back & zoom out to the whole celestial sphere
-  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
-  const f0 = Math.log(sky.fov()), f1 = Math.log(fov);
-  
-  // Custom 5th order smoother for silky space pull-back (quintic ease-in-out)
-  const qsmooth = x => x * x * x * (x * (x * 6 - 15) + 10);
-  
-  await tween(dur, t => {
-    const p = qsmooth(t);
-    // Smooth spherical slerp from target direction back to home orientation
-    const [r, d] = radec(slerp(u0, u1, p));
-    // Exponential logarithmic zoom expansion
-    const curFov = Math.exp(f0 + (f1 - f0) * p);
-    sky.set(r, d, curFov);
-  });
+async function flyHome(ra, dec, fov, dur) {         // back out to the whole sky
+  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec), f0 = Math.log(sky.fov()), f1 = Math.log(fov);
+  await tween(dur, t => { const p = smooth(t), [r, d] = radec(slerp(u0, u1, p)); sky.set(r, d, Math.exp(f0 + (f1 - f0) * p)); });
   sky.set(ra, dec, fov);
 }
 
@@ -591,9 +319,9 @@ function makeOverlay() {
 }
 
 async function go(item) {
-  leaveLanding();
-  if (view === "home") busy = false;
   if (busy && view !== "view") return;
+  leaveLanding();
+  if (curMap !== "tmass") setMap("tmass");
   if (app.classList.contains("deep")) exitDepth();
   closeSearch(true); closeAbout();
   if (view === "view") {                           // from the three panels: dim them away, the sky fades in behind, then fly on
@@ -621,28 +349,21 @@ async function go(item) {
   setView("flying"); sky.haltSpin(); spinning = false; smoothId++; smoothCv.classList.remove("on");
   wiseCanvas = null; skyCanvas = null; makeOverlay(); app.classList.remove("smoothready");
   const my = req.nonce, det = item.detector || "SPHEREx-D3";
-  // 1) HiDPI 2MASS map of the whole window, razor-sharp, to take over from Aladin's pixels as the zoom lands
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const cw = Math.min(2400, Math.round(sky.W * dpr)), ch = Math.round(cw * sky.H / sky.W);
-  renderCutout(SURVEYS.tmass, req.pos[0], req.pos[1], ENDFOV(), cw, ch, { gain: 1.18, gamma: 0.92, black: 0.02 }).then(c => {
+  // 1) the SPHEREx all-sky map of the whole window, smoothed, to take over from Aladin's pixels as the zoom lands
+  const cw = 768, ch = Math.round(cw * sky.H / sky.W);
+  renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, {}).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
     app.classList.add("smoothready"); if (req.arrived) overlay.style.opacity = "1";
   }).catch(() => {});
   // 2) the archive image at the same wavelength, same window, for the left panel
-  const f = $("pSpx").getBoundingClientRect(), pw = Math.min(840, Math.round(f.width * dpr)), ph = Math.round(pw * f.height / f.width);
+  const f = $("pSpx").getBoundingClientRect(), pw = Math.min(560, Math.round(f.width * Math.min(2, devicePixelRatio || 1))), ph = Math.round(pw * f.height / f.width);
   req.wiseJob = { survey: cmpI.survey, pw, ph };
   // the server builds the SPHEREx field with exactly this centre and size, so the AllWISE picture can start now
   req.wiseJob.p = renderCutout(req.wiseJob.survey, req.pos[0], req.pos[1], req.fieldDeg * pw / ph, pw, ph, WISETONE).catch(() => null);
   startProgressBar();
-  const targetLabel = item.name || (item.ra != null && item.dec != null ? `${Number(item.ra).toFixed(2)}°, ${Number(item.dec) >= 0 ? "+" : ""}${Number(item.dec).toFixed(2)}°` : "Target");
-  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 3000, targetLabel);
+  await flyTo(req.pos[0], req.pos[1], ENDFOV(), 7500);     // the slow, readable flight: zoom out, turn, glide in
   req.arrived = true; autoCuts(); if (skyCanvas) overlay.style.opacity = "1";
-
-  // After arriving and locking on, showcase the star / nebula / patch of space in clean high resolution for 2 seconds
-  // before the analytical data panels slide in
-  await new Promise(r => setTimeout(r, 2000));
-
   setView("waiting"); tryReveal();
 }
 
@@ -654,7 +375,7 @@ function startProgressBar() {
   bar.style.width = "0%";
   let progress = 0;
   const startT = performance.now();
-  const duration = 4800;  // smoothly spans the 3s pan + 2s high-resolution star showcase
+  const duration = 7400;  // fills while the 7.5 s flight runs
   progInterval = setInterval(() => {
     const elapsed = performance.now() - startT;
     const t = Math.min(1, elapsed / duration);
@@ -702,27 +423,21 @@ async function tryReveal() {
 
   const { W, H, S, k, A, dx, dy } = geom();
   preparePlayer(res);                                       // frame 1 drawn underneath, invisible
-  setTimeout(() => app.classList.add("shown"), 150);
-
-  clip.style.willChange = "clip-path, transform";
-  inner.style.willChange = "transform";
-  clip.style.backfaceVisibility = "hidden";
-  inner.style.backfaceVisibility = "hidden";
-  const tweenPromise = tween(650, t => {
+  setTimeout(() => app.classList.add("shown"), 300);
+  
+  // Smooth 800ms squish transition into the SPHEREx player (completing the full ~3s cinematic feel)
+  const tweenPromise = tween(1100, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
-    inner.style.transform = `translate3d(${dx * p}px,${dy * p}px,0) scale(${1 + (k - 1) * p})`;
-    clip.style.clipPath = `inset(${Math.max(0, cy - h / 2)}px ${Math.max(0, W - cx - w / 2)}px ${Math.max(0, H - cy - h / 2)}px ${Math.max(0, cx - w / 2)}px round ${26 * smooth(clamp01(p * 1.3))}px)`;
+    inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
+    clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${6 * smooth(clamp01(p * 1.3))}px)`;
   });
 
   await tweenPromise;
-  clip.style.willChange = "auto";
-  inner.style.willChange = "auto";
-  clearLockAndWarp();
   // the archive picture arrives when it arrives: paint now (empty if not ready) and again once it is in
   wiseCanvas = null; paintWise(res);
   wisePromise.then(c => { if (c && args.result && args.result.nonce === res.nonce) { wiseCanvas = c; paintWise(res); } });
   $("spxCv").classList.add("on");                           // the map hands over to the real SPHEREx frames
-  await new Promise(r => setTimeout(r, 150));
+  await new Promise(r => setTimeout(r, 500));
   clip.style.visibility = "hidden";
   setView("view"); startPlayer();
   syncCmp(res);
@@ -730,12 +445,12 @@ async function tryReveal() {
   else emit({ type: "bands", nonce: "b" + Date.now(), for: res.nonce, key: req && req.key });
 }
 
-function abortHome() { clearLockAndWarp(); busy = false; req = null; leave(true); }
+function abortHome() { busy = false; req = null; leave(true); }
 
 async function leave(fromError = false) {
   if (busy && !fromError && view !== "view" && view !== "waiting") return;
   if (app.classList.contains("deep")) exitDepth();
-  stopPlayer(); clearLockAndWarp();
+  stopPlayer();
   const was = view;
   emit({ type: "home", nonce: "h" + Date.now() });
   setView("leaving");
@@ -743,21 +458,11 @@ async function leave(fromError = false) {
   selEl.classList.remove("on");
   if (was === "view" || was === "settling") await unsquish();
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
-  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .6s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 650); }
+  if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
   setView("flying");
+  app.classList.add("landing", "side"); SIDE = true; placeSide();
   const c = sky.center();
-  // Cinematic 3.0s whoosh pull-back through the stars to the whole celestial sphere
-  await flyHome(c[0], 0, sky.homeFov(), 3000);
-  clearLockAndWarp();
-  if (window.history && window.history.replaceState) {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("ra");
-    url.searchParams.delete("dec");
-    url.searchParams.delete("fov");
-    url.searchParams.delete("name");
-    url.searchParams.delete("target");
-    window.history.replaceState(null, "", url.pathname);
-  }
+  await flyHome(c[0], 0, sky.homeFov(), 3200);
   setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
 // the three panels fold back into the full-screen sky (reverse of the reveal)
@@ -765,17 +470,13 @@ async function unsquish() {
   {
     const { W, H, S, k, A, dx, dy } = geom();
     clip.style.visibility = "visible"; $("spxCv").classList.remove("on");
-    await new Promise(r => setTimeout(r, 120));
-    clip.style.willChange = "clip-path, transform";
-    inner.style.willChange = "transform";
-    await tween(700, t => {
+    await new Promise(r => setTimeout(r, 300));
+    await tween(900, t => {
       const p = 1 - smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
-      inner.style.transform = `translate3d(${dx * p}px,${dy * p}px,0) scale(${1 + (k - 1) * p})`;
+      inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
       const g = smooth(t);
       clip.style.clipPath = `inset(${(cy - h / 2) * (1 - g)}px ${(W - cx - w / 2) * (1 - g)}px ${(H - cy - h / 2) * (1 - g)}px ${(cx - w / 2) * (1 - g)}px round ${26 * (1 - t)}px)`;
     });
-    clip.style.willChange = "auto";
-    inner.style.willChange = "auto";
   }
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
 }
@@ -799,27 +500,23 @@ function fillPage(res) {
   const where = f.constellation ? `in ${f.constellation}` : "";
   $("iKind").textContent = f.kind ? `${f.kind}${where ? " · " + where : ""}` : `Patch of sky ${where}`.trim();
   let row;
-  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).filter(o => inView(res, o)).length, "objects listed") + fact(res.visits, "SPHEREx visits");
+  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).length, "objects listed") + fact(res.visits, "SPHEREx visits");
   else if (f.galaxy) row = fact(f.redshift != null ? `z ${fmtN(f.redshift, Math.abs(f.redshift) < 0.1 ? 4 : 3)}` : null, f.redshift < 0 ? "moving toward us" : "redshift") + fact(fmtAgo(f.light_years_ago), "light left") + fact(f.size_arcmin ? `${fmtN(f.size_arcmin, 1)}′` : null, "size on sky");
   else row = fact(fmtLy(f.distance_ly), "distance") + fact(f.temp_k ? `≈${fmtN(f.temp_k)} K` : null, "surface temp") + fact(f.motion_arcsec_yr != null ? `${fmtN(f.motion_arcsec_yr, f.motion_arcsec_yr < 1 ? 2 : 1)}″/yr` : null, "motion on sky");
   $("iFacts").innerHTML = row;
   const [a, b] = sexa(res.ra, res.dec);
   $("iCoord").textContent = `${a}   ${b}`;
   $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
-  const lc = res.lc;
-  $("iLc").innerHTML = lc ? `${sparkline(lc.pts)}<span>${lc.word}</span>` : `<span class="dim">Not enough clean frames to tell</span>`;
+  paintLc(res.lc);
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
   drawSpectrum(); buildWave(res);
-  if (window.history && window.history.replaceState) {
-    const url = new URL(window.location.href);
-    url.searchParams.set("ra", Number(res.ra).toFixed(4));
-    url.searchParams.set("dec", Number(res.dec).toFixed(4));
-    url.searchParams.set("fov", Math.round(res.field_deg * 3600));
-    if (res.name && !res.name.startsWith("Selected")) url.searchParams.set("name", res.name);
-    window.history.replaceState(null, "", url.toString());
-  }
+}
+function paintLc(lc) {
+  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}${lc.src ? `<small class="lcsrc">${lc.src}</small>` : ""}</span>`
+    : `<span class="dim">Too few clean exposures to tell</span>`;
+  if (lc && !(lc.pts && lc.pts.length)) $("iLc").querySelector("span").insertAdjacentHTML("beforeend", `<small class="lcsrc">Checking NEOWISE instead…</small>`);
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
@@ -859,11 +556,8 @@ function drawSpectrum() {
   g += `<path d="${top}${bot}Z" class="err"/>`;
   g += `<path d="${sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[1]).toFixed(1)}`).join("")}" class="line"/>`;
   for (const f of sp.features) g += `<line x1="${x(f.wl)}" x2="${x(f.wl)}" y1="${T}" y2="${H - B}" class="ft"/><text x="${x(f.wl)}" y="${T - 3}" class="ftl">${f.label}</text>`;
-  const notes = [];
-  if (sp.wings) notes.push("Saturated core: shape measured in the star's wings");
-  else if (!sp.features.length) notes.push("No strong absorption features");
-  const noteHtml = notes.map(t => `<p class="specnote">${t}</p>`).join("");
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${noteHtml}`;
+  const note = sp.features.length ? "" : `<p class="specnote">No strong absorption features</p>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${note}${sp.wings ? `<p class="specnote">Saturated core: shape measured in the star's wings</p>` : ""}`;
 }
 
 /* ---------------------------------------------------------------- wavelength bar (bottom) */
@@ -918,6 +612,8 @@ function showBand(d) {
 })();
 function onBands(res) {                             // the other five ranges and the spectra have arrived
   last_res = Object.assign(last_res || {}, { bands: res.bands, spectra: res.spectra });
+  if (res.lc && res.lc.src) { last_res.lc = res.lc; paintLc(res.lc); }
+  else if (last_res.lc && !(last_res.lc.pts && last_res.lc.pts.length)) $("iLc").querySelectorAll(".lcsrc").forEach(e => e.remove());
   buildWave(last_res); drawSpectrum();
   if (bandSel !== detNum(last_res.detector) && bandReady(bandSel)) showBand(bandSel);
 }
@@ -932,7 +628,8 @@ function inView(res, o) {
 }
 function fillObjects(res) {
   const ul = $("iObjs"); ul.innerHTML = ""; hl = null; drawHl();
-  const all = res.objects || [], list = all.filter(o => inView(res, o));   // only what the panels actually show
+  const all = res.objects || [], vis = all.filter(o => inView(res, o));   // only what the panels actually show
+  const list = vis.length ? vis : all;                                    // panels still animating: show them all
   if (!list.length) { ul.innerHTML = `<li class="none">Nothing bright enough to list</li>`; return; }
   list.forEach(o => {
     const li = document.createElement("li");
@@ -1051,30 +748,8 @@ function ring(g, x, y, size, a = 0.85) {
 
 /* ---------------------------------------------------------------- SPHEREx player */
 let P = null, imgs = [], playing = true, tpos = 0, dragging = false, raf = 0, last = 0, backdrop = null, tmp = null;
-let procMode = "normal"; // "normal" | "diff" | "stack"
-let stackedCv = null;
-
-function computeStack() {
-  if (!imgs.length) return null;
-  const c = document.createElement("canvas");
-  c.width = imgs[0].naturalWidth || imgs[0].width || 512;
-  c.height = imgs[0].naturalHeight || imgs[0].height || 512;
-  const ctx = c.getContext("2d");
-  const count = imgs.length;
-  ctx.clearRect(0, 0, c.width, c.height);
-  ctx.globalAlpha = 1.0 / count;
-  for (let k = 0; k < count; k++) {
-    ctx.drawImage(imgs[k], 0, 0, c.width, c.height);
-  }
-  ctx.globalAlpha = 1.0;
-  return c;
-}
-
 function loadFrames(res) {
-  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => {
-    imgs = a;
-    stackedCv = computeStack();
-  });
+  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => { imgs = a; });
 }
 function preparePlayer(res) {
   P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curYears = res.years; P.curBase = true;
@@ -1110,24 +785,10 @@ function drawSpx() {
   const cw = cv.width, ch = cv.height, S = ch, ox = (cw - S) / 2;
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
   if (backdrop) g.drawImage(backdrop, 0, 0);          // either side of the square field: the sky map, dimmed
-
-  if (procMode === "stack" && stackedCv) {
-    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;
-    g.drawImage(stackedCv, ox, 0, S, S);
-    g.filter = "none";
-  } else {
-    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
-    g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
-    if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
-    g.filter = "none";
-    if (procMode === "diff" && wiseCanvas) {
-      g.save();
-      g.globalCompositeOperation = "difference";
-      g.globalAlpha = 0.85;
-      g.drawImage(wiseCanvas, ox, 0, S, S);
-      g.restore();
-    }
-  }
+  g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
+  g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
+  if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
+  g.filter = "none";
   const Y = P.curYears || P.years, yr = Y ? (j > i ? Y[i] + (Y[j] - Y[i]) * e : Y[i]) : args.mid;
   for (const m of P.movers || []) {           // in every wavelength band: grey = archive position, dotted line, red = now
     const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
@@ -1135,79 +796,7 @@ function drawSpx() {
   }
 
   const k = Math.round(tpos) % n, ds = P.curDates || P.dates;
-  const tag = procMode === "diff" ? " · Difference" : procMode === "stack" ? " · Temporal Stack" : "";
-  $("spxCap").textContent = (ds[k % ds.length] || "") + tag;
-}
-
-function initProcControls() {
-  const mSub = $("modeSub"), mStk = $("modeStack"), sBtn = $("shareBtn"), dlBtn = $("dlBtn");
-  if (mSub) {
-    mSub.onclick = () => {
-      procMode = procMode === "diff" ? "normal" : "diff";
-      mSub.classList.toggle("on", procMode === "diff");
-      if (mStk) mStk.classList.remove("on");
-      drawSpx();
-    };
-  }
-  if (mStk) {
-    mStk.onclick = () => {
-      procMode = procMode === "stack" ? "normal" : "stack";
-      mStk.classList.toggle("on", procMode === "stack");
-      if (mSub) mSub.classList.remove("on");
-      drawSpx();
-    };
-  }
-  if (dlBtn) {
-    dlBtn.onclick = () => {
-      if (!last_res) return;
-      const spxCv = $("spxCv");
-      const wiseCv = $("wiseCv");
-      const isSplit = app.classList.contains("split");
-      const name = (last_res.name || "field").replace(/[^a-zA-Z0-9_-]/g, "_");
-      
-      const outCanvas = document.createElement("canvas");
-      if (isSplit && wiseCv && wiseCv.width > 0) {
-        outCanvas.width = wiseCv.width + spxCv.width;
-        outCanvas.height = Math.max(wiseCv.height, spxCv.height);
-        const ctx = outCanvas.getContext("2d");
-        ctx.fillStyle = "#0d0f12";
-        ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
-        ctx.drawImage(wiseCv, 0, 0);
-        ctx.drawImage(spxCv, wiseCv.width, 0);
-      } else {
-        outCanvas.width = spxCv.width;
-        outCanvas.height = spxCv.height;
-        const ctx = outCanvas.getContext("2d");
-        ctx.drawImage(spxCv, 0, 0);
-      }
-      
-      outCanvas.toBlob(blob => {
-        if (!blob) return;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `draconid_drift_${name}_${procMode}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        toast("Image downloaded");
-      }, "image/png");
-    };
-  }
-  if (sBtn) {
-    sBtn.onclick = () => {
-      if (!last_res) return;
-      const url = new URL(window.location.href);
-      url.searchParams.set("ra", Number(last_res.ra).toFixed(4));
-      url.searchParams.set("dec", Number(last_res.dec).toFixed(4));
-      url.searchParams.set("fov", Math.round(last_res.field_deg * 3600));
-      navigator.clipboard?.writeText(url.toString()).then(() => {
-        toast("Direct coordinate link copied to clipboard!");
-      }).catch(() => {
-        toast(`Link: ?ra=${last_res.ra.toFixed(4)}&dec=${last_res.dec.toFixed(4)}`);
-      });
-    };
-  }
+  $("spxCap").textContent = ds[k % ds.length] || "";
 }
 /* before / after: the archive panel sits beside SPHEREx by default; the button hides or shows it */
 app.classList.add("split");
@@ -1223,114 +812,31 @@ $("cmpBtn").onclick = () => {
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) { paintWise(last_res); fillObjects(last_res); } drawHl(); });
 };
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    const demoEl = $("demo");
-    if (demoEl && demoEl.classList.contains("on")) {
-      demoEl.classList.remove("on");
-      const demoV = $("demoV");
-      if (demoV) demoV.pause();
-      leaveLanding();
-    } else if (app.classList.contains("searching")) closeSearch();
-    else if (app.classList.contains("about")) closeAbout();
-  }
+  if (e.key === "Escape") { if (app.classList.contains("searching")) closeSearch(); else if (app.classList.contains("about")) closeAbout(); }
   if (e.key === " " && view === "view" && document.activeElement === document.body) { e.preventDefault(); playing = !playing; }
 });
 
 /* ---------------------------------------------------------------- search */
-const CORE_PRESETS = [
-  // NASA Space Apps Challenge Targets
-  { group: "Moving Stars (NASA Challenge)", key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "High proper-motion red dwarf (10.3″/yr)" },
-  { group: "Moving Stars (NASA Challenge)", key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Cold brown dwarf binary companion" },
-  { group: "Moving Stars (NASA Challenge)", key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Coldest known brown dwarf (8.1″/yr)" },
-  { group: "Moving Stars (NASA Challenge)", key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Young variable star with dimming disk" },
-  { group: "Moving Stars (NASA Challenge)", key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Mira pulsating variable red giant" },
-  // Fast Movers
-  { group: "Fast Movers", key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)" },
-  { group: "Fast Movers", key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary star system (5.3″/yr)" },
-  { group: "Fast Movers", key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)" },
-  { group: "Fast Movers", key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
-  // Notable Sky Targets
-  { group: "Notable Sky Targets", key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
-  { group: "Notable Sky Targets", key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system to the Sun", fov: 450 },
-  { group: "Notable Sky Targets", key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
-  { group: "Notable Sky Targets", key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant star in Orion", fov: 400 },
-  { group: "Notable Sky Targets", key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard photometric calibrator star", fov: 350 },
-  { group: "Notable Sky Targets", key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Seven Sisters open star cluster (M45)", fov: 1200 },
-  { group: "Notable Sky Targets", key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
-  { group: "Notable Sky Targets", key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 },
-  { group: "Notable Sky Targets", key: "custom", name: "Orion Nebula", ra: 83.822083, dec: -5.391111, pmra: 0, pmdec: 0, epoch: 2000, kind: "Brightest diffuse star-forming nebula (M42)", fov: 800, size: 66 },
-  { group: "Notable Sky Targets", key: "custom", name: "Sagittarius A*", ra: 266.416837, dec: -29.007810, pmra: 0, pmdec: 0, epoch: 2000, kind: "Supermassive black hole at Galactic centre", fov: 400 }
-];
-
 const sEl = $("search"), qEl = $("q"), listEl = $("results"), sbtn = $("sbtn");
 let items = [], sel = -1, qid = 0;
 const thumbCache = new Map(), thumbQ = [];
 let thumbBusy = false;
 function openSearch() {
-  leaveLanding();
+  if (view !== "home" && view !== "view") return;
   loadCatalog(); closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
-  tipEl.classList.remove("on"); showItems(qEl.value.trim() ? filterItems(qEl.value.trim()) : presetItems()); setTimeout(() => qEl.focus(), 60);
+  tipEl.classList.remove("on"); showItems(presetItems()); setTimeout(() => qEl.focus(), 120);
 }
 function closeSearch(quick) {
   sEl.classList.remove("open"); app.classList.remove("searching"); sbtn.setAttribute("aria-expanded", "false"); qEl.blur();
   if (!quick) setTimeout(() => { if (!sEl.classList.contains("open")) qEl.value = ""; }, 400);
 }
 sbtn.onclick = () => (sEl.classList.contains("open") ? closeSearch() : openSearch());
-qEl.addEventListener("focus", () => { if (!sEl.classList.contains("open")) openSearch(); });
-qEl.addEventListener("click", () => { if (!sEl.classList.contains("open")) openSearch(); });
 $("veil").onclick = () => closeSearch();
-const presetItems = () => {
-  if (args.presets && args.presets.length) {
-    const combined = [...args.presets.map(p => Object.assign({}, p, {
-      group: "Moving Stars (NASA Challenge)",
-      kind: KINDS[p.key] || p.kind || ""
-    }))];
-    const seen = new Set(combined.map(c => c.name.toLowerCase()));
-    for (const p of CORE_PRESETS) {
-      if (!seen.has(p.name.toLowerCase())) { combined.push(p); seen.add(p.name.toLowerCase()); }
-    }
-    return combined;
-  }
-  return CORE_PRESETS;
-};
+const presetItems = () => args.presets.map(p => Object.assign({}, p, { kind: KINDS[p.key] || "" }));
 
 function showItems(list) {
-  items = list || []; sel = -1; listEl.innerHTML = "";
-  if (!qEl.value.trim()) {
-    const rRow = document.createElement("li");
-    rRow.className = "random-pick-row";
-    rRow.innerHTML = `<button type="button" class="random-pick-btn">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-      </svg>
-      Pick a Random Star
-    </button>`;
-    const btn = rRow.querySelector("button");
-    btn.onclick = e => {
-      e.stopPropagation();
-      closeSearch();
-      const pool = presetItems();
-      const pick = pool[Math.floor(Math.random() * pool.length)];
-      if (pick) choose(pick);
-    };
-    listEl.appendChild(rRow);
-  }
-  if (!items.length) {
-    const li = document.createElement("li");
-    li.className = "no-results";
-    li.textContent = "No celestial objects found. Type an object name or coordinates (e.g. 269.45, 4.74)";
-    listEl.appendChild(li);
-    return;
-  }
-  let lastGroup = "";
-  items.forEach((it, i) => {
-    if (it.group && it.group !== lastGroup) {
-      lastGroup = it.group;
-      const hdr = document.createElement("li");
-      hdr.className = "hdr";
-      hdr.textContent = it.group;
-      listEl.appendChild(hdr);
-    }
+  items = list; sel = -1; listEl.innerHTML = "";
+  list.forEach((it, i) => {
     const li = document.createElement("li"); li.setAttribute("role", "option");
     li.innerHTML = `<div class="th"></div><div><div class="nm"></div><div class="kd"></div></div>`;
     li.querySelector(".nm").textContent = it.name; li.querySelector(".kd").textContent = it.kind || "";
@@ -1338,19 +844,15 @@ function showItems(list) {
     listEl.appendChild(li); thumb(it, li.querySelector(".th"));
   });
 }
-function mark(i) {
-  sel = i;
-  const options = listEl.querySelectorAll("li[role=option]");
-  options.forEach((c, j) => c.classList.toggle("on", j === i));
-}
+function mark(i) { sel = i; [...listEl.children].forEach((c, j) => c.classList.toggle("on", j === i)); }
 function choose(it) {
-  const fov = it.key !== "custom" ? it.fov : Math.min(7200, Math.max(300, 1.3 * 60 * (it.size || 0)));
+  const fov = it.key !== "custom" ? it.fov : Math.min(18000, Math.max(300, 1.3 * 60 * (it.size || 0)));
   go(Object.assign({ epoch: 2000, pmra: 0, pmdec: 0, detector: "SPHEREx-D3" }, it, { fov: fov || 300 }));
 }
 
 function thumb(it, box) {
   const key = it.key + "|" + it.name;
-  if (thumbCache.has(key)) { box.appendChild(thumbCache.get(key).cloneNode(true)); box.firstChild.classList.add("ok"); return; }
+  if (thumbCache.has(key)) { const c = thumbCache.get(key), k = c.cloneNode(); k.getContext("2d").drawImage(c, 0, 0); box.appendChild(k); k.classList.add("ok"); return; }
   thumbQ.push({ it, box, key }); pump();
 }
 async function pump() {
@@ -1366,25 +868,13 @@ async function pump() {
   thumbBusy = false;
 }
 
-function filterItems(q) {
-  const qLower = q.toLowerCase();
-  const all = presetItems();
-  const local = all.filter(p =>
-    p.name.toLowerCase().includes(qLower) ||
-    (p.kind && p.kind.toLowerCase().includes(qLower)) ||
-    (p.key && p.key.toLowerCase().includes(qLower))
-  ).concat(famous(q));
-  const num = parseCoords(q);
-  return num ? [num] : local;
-}
-
 let deb = 0;
 qEl.addEventListener("input", () => {
   clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
   if (!q) return showItems(presetItems());
-  const first = filterItems(q);
+  const local = presetItems().filter(p => p.name.toLowerCase().includes(q.toLowerCase())).concat(famous(q));
+  const num = parseCoords(q); const first = num ? [num] : local;
   showItems(first);
-  const num = parseCoords(q);
   if (!num && q.length >= 2) deb = setTimeout(() => remote(q, my, first), 260);
 });
 qEl.addEventListener("keydown", e => {
@@ -1493,8 +983,15 @@ async function remote(q, my, have) {
 
 /* ---------------------------------------------------------------- top bar */
 let page = null;
+let mathDone = false;
+function typesetMath() {                              // formulas in How it works, rendered once KaTeX has loaded
+  if (mathDone) return;
+  if (!window.renderMathInElement) return setTimeout(typesetMath, 300);
+  try { window.renderMathInElement($("about"), { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "\\(", right: "\\)", display: false }], throwOnError: false }); mathDone = true; } catch (e) {}
+}
 function openAbout(which = "how") {
-  leaveLanding();
+  if (which === "how") typesetMath();
+  if (which === "discoveries" || which === "compare") fillLibrary(which);
   if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
   document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
   document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));
@@ -1503,37 +1000,327 @@ function closeAbout() { page = null; app.classList.remove("about"); document.que
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
-initProcControls();
+/* ---------------------------------------------------------------- Discoveries and Compare */
+// Both read the library the server keeps of everything opened so far (Streamlit sends it with every render; the
+// FastAPI server answers /api/stage/library).
+const getLibrary = () => args.library ? Promise.resolve(args.library)
+  : fetch("/api/stage/library").then(r => r.json()).catch(() => ({ discoveries: [], library: [] }));
+const escH = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const whenTxt = t => !t ? "Preset" : new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const entryItem = e => (e.key && e.key !== "custom" && args.presets && args.presets.find(p => p.key === e.key)) ||
+  { key: "custom", name: e.name, ra: e.ra, dec: e.dec, pmra: e.pmra || 0, pmdec: e.pmdec || 0, epoch: e.epoch || args.mid, fov: e.fov || 300, detector: e.detector || "SPHEREx-D3" };
+async function fillLibrary(which) {
+  const L = await getLibrary();
+  if (which === "discoveries") {
+    const ul = $("dlist"); ul.innerHTML = "";
+    const rows = L.discoveries || [];
+    if (!rows.length) { ul.innerHTML = `<li class="none">Nothing logged yet. Open a fast-moving star to start the log.</li>`; return; }
+    for (const e of rows) {
+      const li = document.createElement("li"), b = document.createElement("button"); b.type = "button";
+      const found = [e.moved_arcsec ? `Moved ${Math.round(e.moved_arcsec)}″ since 2000` : null, e.varies ? `Brightness ${e.lc}` : null].filter(Boolean).join(" · ");
+      b.innerHTML = `<span><b>${escH(e.name)}</b><small>${escH(e.kind || "")}${e.constellation ? " · " + escH(e.constellation) : ""}</small></span>
+        <span class="f">${escH(found)}</span><span>${escH(e.moved_arcsec ? (e.conf || "—") : "—")}</span><span>${e.distance_ly ? fmtLy(e.distance_ly) : "—"}</span><span>${whenTxt(e.first || e.when)}</span>`;
+      b.onclick = () => { closeAbout(); choose(entryItem(e)); };
+      li.appendChild(b); ul.appendChild(li);
+    }
+    return;
+  }
+  const lib = L.library || [], sA = $("cA"), sB = $("cB");
+  const keep = [sA.value, sB.value];
+  const opts = lib.map((e, i) => `<option value="${i}">${escH(e.name)}</option>`).join("");
+  sA.innerHTML = opts; sB.innerHTML = opts;
+  const idx = n => Math.max(0, lib.findIndex(e => e.name === n));
+  sA.value = keep[0] ? idx(lib[+keep[0]] ? lib[+keep[0]].name : "") : 0;
+  sB.value = keep[1] ? keep[1] : Math.min(1, lib.length - 1);
+  const draw = () => drawCompare(lib[+sA.value], lib[+sB.value]);
+  sA.onchange = draw; sB.onchange = draw; draw();
+}
+function drawCompare(a, b) {
+  if (!a || !b) { $("ctable").innerHTML = `<p class="dim">Open at least two objects to compare them.</p>`; $("cspec").innerHTML = ""; return; }
+  const row = (label, f) => `<tr><th>${label}</th><td>${f(a) ?? "—"}</td><td>${f(b) ?? "—"}</td></tr>`;
+  $("ctable").innerHTML = `<table><tr><th></th><th class="ca">${escH(a.name)}</th><th class="cb">${escH(b.name)}</th></tr>
+    ${row("What it is", e => escH(e.kind))}
+    ${row("Distance", e => e.distance_ly ? fmtLy(e.distance_ly) : null)}
+    ${row("Surface temperature", e => e.temp_k ? `≈${fmtN(e.temp_k)} K` : null)}
+    ${row("Motion on the sky", e => e.motion != null ? `${fmtN(e.motion, e.motion < 1 ? 2 : 1)}″/yr` : null)}
+    ${row("Moved since 2000", e => e.moved_arcsec ? `${Math.round(e.moved_arcsec)}″` : null)}
+    ${row("Brightness over time", e => escH(e.lc))}
+    ${row("Objects in the frame", e => e.n_objects)}
+    ${row("SPHEREx visits", e => e.visits)}
+    ${row("Spectral features", e => e.spectrum && e.spectrum.features && e.spectrum.features.length ? escH([...new Set(e.spectrum.features)].join(", ")) : null)}</table>`;
+  // spectra on one chart: each divided by its own median so shapes compare, log wavelength from 0.75 to 5 µm
+  const W = 760, H = 240, P = 36, lx = w => P + (Math.log(w) - Math.log(0.75)) / (Math.log(5) - Math.log(0.75)) * (W - 2 * P);
+  const series = [[a, "#e8be8c"], [b, "#8fb8ff"]].filter(([e]) => e.spectrum && e.spectrum.pts && e.spectrum.pts.length > 3);
+  if (!series.length) { $("cspec").innerHTML = `<p class="dim">No spectrum yet. Open each object once; its spectrum is measured while you look.</p>`; return; }
+  const norm = series.map(([e, c]) => { const v = e.spectrum.pts.map(p => p[1]).sort((x, y) => x - y), m = v[v.length >> 1]; return [e, c, e.spectrum.pts.map(p => [p[0], p[1] / m])]; });
+  const all = norm.flatMap(s => s[2].map(p => p[1])), hi = Math.max(1.5, ...all), lo = Math.min(0.5, ...all);
+  const ly = v => H - P - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (H - 2 * P);
+  const ticks = [1, 2, 3, 4, 5].map(w => `<line x1="${lx(w)}" x2="${lx(w)}" y1="${H - P}" y2="${H - P + 5}" stroke="rgba(255,255,255,.3)"/><text x="${lx(w)}" y="${H - P + 18}" text-anchor="middle">${w}${w === 5 ? " µm" : ""}</text>`).join("");
+  const lines = norm.map(([e, c, pts]) => `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${lx(p[0]).toFixed(1)},${ly(p[1]).toFixed(1)}`).join("")}" fill="none" stroke="${c}" stroke-width="2"/>`).join("");
+  const key = norm.map(([e, c], i) => `<text x="${P + i * 220}" y="18" style="fill:${c};font-weight:600">${escH(e.name)}</text>`).join("");
+  $("cspec").innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="cchart"><line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="rgba(255,255,255,.2)"/>${ticks}${lines}${key}</svg>
+    <p class="dim">Each spectrum is divided by its own median, so the chart compares shapes (colour and molecular dips), not brightness.</p>`;
+}
+
+/* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
+const MOVER_CATALOG = [
+  // 5 NASA Challenge Presets
+  { key: "barnard", name: "Barnard's Star", ra: 269.448503, dec: 4.739420, pmra: -801.551, pmdec: 10362.394, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge mover (10.3″/yr)", tag: "Challenge" },
+  { key: "epsindi", name: "Epsilon Indi B", ra: 331.076453, dec: -56.793812, pmra: 3987.41, pmdec: -2505.35, epoch: 2016.0, fov: 360, detector: "SPHEREx-D3", kind: "Challenge mover · Brown dwarf pair", tag: "Challenge" },
+  { key: "wise0855", name: "WISE 0855-0714", ra: 133.795129, dec: -7.245147, pmra: -8118.9, pmdec: 679.3, epoch: 2010.5, fov: 360, detector: "SPHEREx-D6", kind: "Challenge mover · Cold brown dwarf (8.1″/yr)", tag: "Challenge" },
+  { key: "rwaur", name: "RW Aurigae", ra: 76.956081, dec: 30.401205, pmra: 2.64, pmdec: -27.40, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Young variable star", tag: "Challenge" },
+  { key: "rdra", name: "R Draconis", ra: 248.167378, dec: 66.755007, pmra: -20.64, pmdec: 6.15, epoch: 2016.0, fov: 300, detector: "SPHEREx-D3", kind: "Challenge preset · Mira pulsating star", tag: "Challenge" },
+  // Additional Fast-Moving Stars
+  { key: "custom", name: "Kapteyn's Star", ra: 77.919, dec: -45.018, pmra: 6505.0, pmdec: -5731.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo subdwarf (8.7″/yr)", tag: "Fast Mover" },
+  { key: "custom", name: "61 Cygni", ra: 316.725, dec: 38.749, pmra: 4164.0, pmdec: 3250.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving binary system (5.3″/yr)", tag: "Fast Mover" },
+  { key: "custom", name: "Groombridge 1830", ra: 178.245, dec: 37.719, pmra: 4003.0, pmdec: -5813.0, epoch: 2000, fov: 300, detector: "SPHEREx-D3", kind: "Fast-moving halo star (7.1″/yr)", tag: "Fast Mover" },
+];
+
+const RANDOM_TARGETS = [
+  { key: "custom", name: "Sirius", ra: 101.287155, dec: -16.716116, pmra: -546.01, pmdec: -1223.07, epoch: 2000, kind: "Brightest star in night sky", fov: 400 },
+  { key: "custom", name: "Alpha Centauri", ra: 219.902066, dec: -60.833975, pmra: -3679.25, pmdec: 473.67, epoch: 2000, kind: "Nearest star system", fov: 450 },
+  { key: "custom", name: "Proxima Centauri", ra: 217.428953, dec: -62.679484, pmra: -3781.74, pmdec: 769.47, epoch: 2000, kind: "Nearest individual star (3.85″/yr)", fov: 350 },
+  { key: "custom", name: "Betelgeuse", ra: 88.792939, dec: 7.407064, pmra: 27.54, pmdec: 11.30, epoch: 2000, kind: "Red supergiant", fov: 400 },
+  { key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard calibrator star", fov: 350 },
+  { key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Open star cluster", fov: 1200 },
+  { key: "custom", name: "Wolf 359", ra: 164.120, dec: 7.015, pmra: -3842, pmdec: -2725, epoch: 2000, kind: "Nearby high-PM red dwarf (4.7″/yr)", fov: 300 },
+  { key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
+];
+
+const sideDrawer = $("side-drawer");
+const drawerToggle = $("drawer-toggle");
+const drawerClose = $("drawer-close");
+const drawerMovers = $("drawer-movers");
+const drawerRandoms = $("drawer-randoms");
+const randomStarBtn = $("random-star-btn");
+
+function initSideDrawer() {
+  if (!drawerMovers || !drawerRandoms) return;
+  drawerMovers.innerHTML = "";
+  drawerRandoms.innerHTML = "";
+
+  function renderList(list, container) {
+    list.forEach(star => {
+      const li = document.createElement("li");
+      li.className = "drawer-star-item";
+      li.innerHTML = `
+        <div class="star-item-main">
+          <div class="star-name">${star.name}</div>
+          <div class="star-desc">${star.kind || ""}</div>
+        </div>
+        ${star.tag ? `<span class="star-badge ${star.tag === 'Challenge' ? 'badge-chal' : 'badge-mover'}">${star.tag}</span>` : ""}
+      `;
+      li.onclick = () => {
+        choose(star);
+      };
+      container.appendChild(li);
+    });
+  }
+
+  renderList(MOVER_CATALOG, drawerMovers);
+  renderList(RANDOM_TARGETS, drawerRandoms);
+
+  if (randomStarBtn) {
+    randomStarBtn.onclick = () => {
+      const pool = [...MOVER_CATALOG, ...RANDOM_TARGETS];
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      choose(pick);
+    };
+  }
+
+  if (drawerToggle) {
+    drawerToggle.onclick = () => {
+      sideDrawer.classList.toggle("open");
+    };
+  }
+  if (drawerClose) {
+    drawerClose.onclick = () => {
+      sideDrawer.classList.remove("open");
+    };
+  }
+}
+
+function openDrawer() {
+  if (sideDrawer) {
+    sideDrawer.classList.add("open");
+  }
+}
+
+initSideDrawer();
 
 /* ---------------------------------------------------------------- landing: Demo / Explore */
 app.classList.add("landing");
 intro.preload().catch(() => {});
-const leaveLanding = () => app.classList.remove("landing");
-
-const demoEl = $("demo"), demoV = $("demoV"), demoSkip = $("demoSkip");
-function closeDemo() {
-  if (demoEl) demoEl.classList.remove("on");
-  if (demoV) demoV.pause();
-  leaveLanding();
+const leaveLanding = () => { app.classList.remove("landing", "picking", "side"); SIDE = false; placeSide(); };
+const BLURB = { barnard: "Watch the fastest star in our sky move", epsindi: "A brown dwarf pair, 12 light years away",
+  wise0855: "Meet the coldest known brown dwarf", rwaur: "A young star wrapped in dust", rdra: "A giant star that pulses" };
+function fillStarts() {
+  const sl = $("startList"); if (!sl || sl.childElementCount || !args || !args.presets || !args.presets.length) return;
+  presetItems().slice(0, 5).forEach(p => {
+    const li = document.createElement("li"), b = document.createElement("button"); b.type = "button";
+    b.innerHTML = `<div class="th"></div><div class="tx"><b></b><small></small></div><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>`;
+    b.querySelector("b").textContent = p.name; b.querySelector("small").textContent = BLURB[p.key] || p.kind || "";
+    b.onclick = () => { leaveLanding(); choose(p); }; li.appendChild(b); sl.appendChild(li); thumb(p, b.querySelector(".th"));
+  });
 }
-
-$("exploreBtn").onclick = () => {
-  leaveLanding();
-  openSearch();
+fillStarts(); setInterval(fillStarts, 500);
+// the home list's search box drives the same search as the bar's: type here, results drop from the bar
+{
+  const lq = $("lq");
+  lq.addEventListener("input", () => {
+    if (!sEl.classList.contains("open")) { loadCatalog(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true"); }
+    qEl.value = lq.value; qEl.dispatchEvent(new Event("input"));
+  });
+  lq.addEventListener("keydown", e => { if (["Enter", "ArrowDown", "ArrowUp", "Escape"].includes(e.key)) { qEl.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true })); if (e.key === "Escape") { lq.value = ""; closeSearch(); } e.preventDefault(); } });
+}
+$("demoBtn").onclick = () => {                      // the film, full screen; when it ends the site slides in and the tour starts
+  const box = $("demo"), v = $("demoV");
+  let done = false;
+  const finish = (ended) => {
+    if (done) return; done = true;
+    box.classList.remove("on"); enterSide();
+    setTimeout(() => { v.pause(); v.currentTime = 0; }, 900);
+    if (ended === true) setTimeout(startTour, 1400);
+  };
+  box.classList.add("on"); v.currentTime = 0;
+  v.play().catch(() => finish(false));                // cannot play (no video support): go straight to the site
+  v.onended = () => finish(true); $("demoSkip").onclick = () => finish(false);
+  window.addEventListener("keydown", function k(e) { if (e.key === "Escape") { window.removeEventListener("keydown", k); finish(false); } });
 };
+$("exploreBtn").onclick = () => enterSide();
 
-$("demoBtn").onclick = () => {
-  if (demoEl && demoV) {
-    demoEl.classList.add("on");
-    demoV.currentTime = 0;
-    demoV.play().catch(() => {});
-  } else {
-    leaveLanding();
+/* ---------------------------------------------------------------- home, stage 2: the globe on the right half */
+// the globe is drawn smaller and slid right so it sits beside the list instead of under it; zoom in and it fills the window
+function sideGeom() {
+  const W = sky.W, lp = document.querySelector("#land .lside").getBoundingClientRect();
+  const left = Math.min(lp.right + 24, W * 0.6), ws = Math.max(280, W - left - 24);
+  return { left, ws, dx: left + ws / 2 - W / 2, dy: -34 };
+}
+function placeSide() {
+  // the whole-sky ellipse is twice as wide as tall, the space beside the list is taller than that: stretch it a
+  // little upright (at most 14%) so it fills the space better. Clicks and selections divide the stretch back out.
+  SY = 1;
+  if (SIDE) {
+    const { ws } = sideGeom(), eh = 0.93 * ws / 2, room = sky.H - 96 - 110;
+    SY = Math.max(1, Math.min(1.14, room / eh));
   }
-};
+  const t = SIDE ? (({ dx, dy }) => `translate(${dx}px,${dy}px) scale(1,${SY.toFixed(3)})`)(sideGeom()) : "";
+  clip.style.transform = t; $("blend").style.transform = t;
+  if (SIDE) { const g = sideGeom(); app.style.setProperty("--ctrlx", (g.left + g.ws / 2) + "px"); }
+}
+{
+  const full = sky.homeFov.bind(sky);
+  sky.homeFov = (topPad = 90) => {                   // fov that fits the whole ellipse in the space it has
+    if (!SIDE) return full(topPad);
+    const W = sky.W, H = sky.H, { ws } = sideGeom();
+    return 360 * Math.max(W / (0.93 * ws), W / (2 * (H - topPad - 16 - 80)));
+  };
+}
+function enterSide() {
+  if (SIDE && app.classList.contains("side")) return;
+  app.classList.add("landing", "side"); SIDE = true;
+  requestAnimationFrame(() => {
+    placeSide();
+    if (view === "home") { const f0 = sky.fov(), f1 = sky.homeFov(); tween(1100, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); }
+  });
+}
+window.addEventListener("resize", () => { if (SIDE) { placeSide(); if (view === "home" && sky.fov() > 100) sky.a.setFoV(sky.homeFov()); } });
+// map controls under the globe: which wavelength the map shows, and zoom
+const MAPS = { dss: SURVEYS.dss.url, tmass: MAP_URL, wise: SURVEYS.wise.url };
+function setMap(k) {
+  try { sky.a.setImageSurvey(MAPS[k]); } catch (e) { try { sky.a.setBaseImageLayer(MAPS[k]); } catch (e2) {} }
+  document.querySelectorAll("#land .wl button").forEach(b => { const on = b.dataset.map === k; b.classList.toggle("on", on); b.setAttribute("aria-checked", on); });
+  curMap = k;
+}
+document.querySelectorAll("#land .wl button").forEach(b => b.onclick = () => setMap(b.dataset.map));
+const zoomBy = k => { wake(); const f0 = sky.fov(), f1 = Math.min(sky.homeFov(), Math.max(0.02, f0 * k)); tween(450, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); };
+$("zIn").onclick = () => zoomBy(0.5); $("zOut").onclick = () => zoomBy(2);
+$("zHome").onclick = () => { wake(); const c = sky.center(); flyHome(c[0], 0, sky.homeFov(), 1200).then(() => { fitBlend(); }); };
 
-if (demoSkip) demoSkip.onclick = closeDemo;
-if (demoV) demoV.onended = closeDemo;
+/* ---------------------------------------------------------------- the guided tour */
+// Runs after the demo film (or from Tour in the top bar): opens WISE 0855-0714 and walks through every feature.
+// A ring stands in for the mouse: it glides to what it is about to press and pulses, then the page really does it.
+let touring = false, tourStep = null;
+const tourEl = $("tour"), curEl = $("tourCur"), hlEl = $("tourHl");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const waitFor = async (ok, ms) => { const t0 = performance.now(); while (!ok()) { if (!touring || performance.now() - t0 > ms) return false; await sleep(150); } return true; };
+function hilite(el) {
+  if (!el) { hlEl.classList.remove("on"); return null; }
+  const r = el.getBoundingClientRect();
+  Object.assign(hlEl.style, { left: (r.left - 6) + "px", top: (r.top - 6) + "px", width: (r.width + 12) + "px", height: (r.height + 12) + "px" });
+  hlEl.classList.add("on"); return r;
+}
+function say(text, el, n, next = "Next") {
+  const r = hilite(el);
+  $("tourTx").innerHTML = text; $("tourN").textContent = n || ""; $("tourNext").textContent = next; $("tourNext").style.display = next ? "" : "none";
+  tourEl.classList.add("on");
+  const W = innerWidth, H = innerHeight, bw = Math.min(360, W - 32), bh = tourEl.offsetHeight || 150;
+  let x = W / 2 - bw / 2, y = H - bh - 30;
+  if (r) {                                             // beside the thing it explains, wherever there is room
+    if (r.right + bw + 24 < W) { x = r.right + 18; y = r.top; }
+    else if (r.left - bw - 24 > 0) { x = r.left - bw - 18; y = r.top; }
+    else { x = Math.min(Math.max(16, r.left), W - bw - 16); y = r.bottom + bh + 30 < H ? r.bottom + 14 : Math.max(16, r.top - bh - 14); }
+  }
+  Object.assign(tourEl.style, { left: x + "px", top: Math.min(Math.max(16, y), H - bh - 16) + "px", width: bw + "px" });
+  // no clicking needed: each step moves on by itself once there has been time to read it (Next skips ahead)
+  clearTimeout(say.t); const bar = $("tourBar");
+  if (next && next !== "Finish") {
+    const ms = Math.max(4000, 2000 + 280 * $("tourTx").textContent.split(/\s+/).length);
+    bar.style.transition = "none"; bar.style.width = "0%"; void bar.offsetWidth;
+    bar.style.transition = `width ${ms}ms linear`; bar.style.width = "100%";
+    say.t = setTimeout(() => { const f = tourStep; tourStep = null; if (f) f(true); }, ms);
+  } else { bar.style.transition = "none"; bar.style.width = "0%"; }
+  return new Promise(res => { tourStep = res; });
+}
+async function fakeClick(el) {                       // glide the ring there, pulse, then press for real
+  if (!el || !touring) return;
+  const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+  curEl.classList.add("on"); await sleep(30);
+  curEl.style.transform = `translate(${x}px,${y}px)`; await sleep(900);
+  curEl.classList.add("press"); await sleep(380); curEl.classList.remove("press");
+  el.click(); await sleep(250); curEl.classList.remove("on");
+}
+$("tourNext").onclick = () => { clearTimeout(say.t); const f = tourStep; tourStep = null; if (f) f(true); };
+$("tourSkip").onclick = () => endTour();
+function endTour() {
+  clearTimeout(say.t); touring = false; tourEl.classList.remove("on"); curEl.classList.remove("on"); hlEl.classList.remove("on");
+  const f = tourStep; tourStep = null; if (f) f(false);
+}
+async function startTour() {
+  if (touring) return; touring = true;
+  closeAbout(); closeSearch(true);
+  if (view !== "home") { await leave(); await waitFor(() => view === "home", 8000); }
+  enterSide(); await sleep(1200);
+  const steps = 7; let n = 0; const N = () => `${++n} / ${steps}`;
+  const S = q => document.querySelector(q);
+  await waitFor(() => S("#startList li"), 6000);
+  const btn = [...document.querySelectorAll("#startList button")].find(b => /WISE 0855/.test(b.textContent)) || S("#startList button");
+  if (!touring || !btn) return endTour();
+  // no button to press here: the ring picks WISE 0855-0714 by itself
+  hilite(btn); btn.classList.add("tour"); await sleep(700); await fakeClick(btn); btn.classList.remove("tour");
+  say("Flying there and loading every SPHEREx image of this spot…", null, "", "");
+  if (!await waitFor(() => view === "view", 120000)) return endTour();
+  await sleep(900);
+  if (!await say("<b>Then and now.</b> Left: the sky years ago. Right: SPHEREx today. The rings show where the star was and is.", S("#page2"), N())) return;
+  if (!await say("<b>Wavelength.</b> Six ranges from 0.75 to 5 µm. Click one to switch.", S("#foot #wave"), N())) return;
+  if (!await say("<b>The star.</b> Distance, temperature, spectrum and brightness over time.", S("#info"), N())) return;
+  if (!await say("<b>In the frame.</b> Everything bright here. Hover one to ring it.", S("#iObjs"), N())) return;
+  // no button to press here either: the ring opens the 3D map
+  const tb = S("#timeBtn"); hilite(tb); await sleep(600); await fakeClick(tb);
+  say("Placing every star and galaxy at its distance…", null, "", "");
+  await waitFor(() => depthOpen, 45000); await sleep(800);
+  if (!touring) return;
+  if (!await say("<b>3D map.</b> Each object at its real distance. Drag to turn, slide to travel in time.", S("#pDepth"), N())) return;
+  if (app.classList.contains("deep")) exitDepth();
+  const db = document.querySelector('#bar .navb[data-page="discoveries"]'); hilite(db); await sleep(500); await fakeClick(db); await sleep(700);
+  if (!await say("<b>Discoveries.</b> Every star the pipeline caught moving or changing. Click one to fly there.", $("dlist"), N())) return;
+  closeAbout();
+  if (!await say("That's it. Back to the sky.", null, `${steps} / ${steps}`, "Finish")) return;
+  touring = false; tourEl.classList.remove("on"); hlEl.classList.remove("on");
+  if (app.classList.contains("deep")) exitDepth();
+  await leave();
+}
+window.addEventListener("resize", () => { if (touring && tourStep) hlEl.classList.remove("on"); });
 
 /* ---------------------------------------------------------------- past & future: the 3D depth view */
 let depthOpen = false;
@@ -1546,7 +1333,7 @@ function enterDepth() {
 }
 function exitDepth() {
   app.classList.remove("deep"); depth.close(); depthOpen = false;
-  $("timeBtn").textContent = "Past & future"; $("timeBtn").setAttribute("aria-pressed", "false");
+  $("timeBtn").textContent = "3D map: distance & time"; $("timeBtn").setAttribute("aria-pressed", "false");
   requestAnimationFrame(() => { if (P) { const keep = [tpos, P.curDates, P.curBase, P.curYears]; preparePlayer(P); [tpos, P.curDates, P.curBase, P.curYears] = keep; drawSpx(); } if (last_res) paintWise(last_res); placeKnob(); });
 }
 async function showDepth(res) {
@@ -1576,7 +1363,6 @@ function onArgs() {
   if (view === "view" && args.result && last_res && args.result.nonce === last_res.nonce && args.result.bands && !last_res.bands) onBands(args.result);
   tryReveal();
 }   // a deep link or a result already loaded: no landing screen
-
 (async () => {
   try {
     const init = await fetch("/api/stage/init").then(r => r.json());
@@ -1585,24 +1371,9 @@ function onArgs() {
   } catch (e) {}
   await boot();
   const qp = new URLSearchParams(window.location.search);
-  let initTarget = null;
   if (qp.has("ra") && qp.has("dec")) {
-    const ra = parseFloat(qp.get("ra")), dec = parseFloat(qp.get("dec"));
-    const fov = parseFloat(qp.get("fov") || "300");
-    const name = qp.get("name") || `${ra.toFixed(2)}°, ${dec >= 0 ? "+" : ""}${dec.toFixed(2)}°`;
-    if (Number.isFinite(ra) && Number.isFinite(dec)) {
-      initTarget = { key: "custom", name, ra, dec, pmra: 0, pmdec: 0, epoch: args.mid, fov, detector: "SPHEREx-D3" };
-    }
-  } else if (qp.has("target") || qp.has("preset") || qp.has("name")) {
-    const query = (qp.get("target") || qp.get("preset") || qp.get("name")).toLowerCase();
-    const match = presetItems().find(p => p.key === query || p.name.toLowerCase() === query);
-    if (match) {
-      initTarget = Object.assign({}, match, { epoch: 2000, pmra: match.pmra || 0, pmdec: match.pmdec || 0, detector: match.detector || "SPHEREx-D3" });
-    }
-  }
-  if (initTarget) {
-    leaveLanding();
-    go(initTarget);
+    const ra = parseFloat(qp.get("ra")), dec = parseFloat(qp.get("dec")), fov = parseFloat(qp.get("fov") || "180");
+    if (Number.isFinite(ra) && Number.isFinite(dec)) { leaveLanding(); go({ key: "custom", name: "Linked location", ra, dec, pmra: 0, pmdec: 0, epoch: args.mid, fov, detector: "SPHEREx-D3" }); }
   }
 })();
 }

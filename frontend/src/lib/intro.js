@@ -4,7 +4,7 @@
 const THREE_URL = "https://unpkg.com/three@0.160.0/build/three.module.js";
 const EARTH_URL = "https://unpkg.com/three-globe@2.31.0/example/img/earth-blue-marble.jpg";
 let THREE = null;
-export const preload = () => (THREE ? Promise.resolve(THREE) : import(/* @vite-ignore */ THREE_URL).then(m => (THREE = m)));
+export const preload = () => (THREE ? Promise.resolve(THREE) : import(THREE_URL).then(m => (THREE = m)));
 
 const ease = x => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 const seg = (t, a, b) => ease((t - a) / (b - a));

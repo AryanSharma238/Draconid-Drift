@@ -27,13 +27,13 @@ def _num(v):
         return None
 
 
-def _gaia(ra, dec, r_deg, timeout=5.0):
+def _gaia(ra, dec, r_deg, timeout=20.0):
     """Gaia DR3 stars with a parallax better than 5 sigma (distance good to 20%), brightest first."""
     import csv
     import io
 
     import httpx
-    q = ("SELECT TOP 400 source_id, ra, dec, parallax, pmra, pmdec, radial_velocity, phot_g_mean_mag FROM gaiadr3.gaia_source "
+    q = ("SELECT TOP 1500 source_id, ra, dec, parallax, pmra, pmdec, radial_velocity, phot_g_mean_mag FROM gaiadr3.gaia_source "
          f"WHERE 1=CONTAINS(POINT('ICRS',ra,dec),CIRCLE('ICRS',{ra:.6f},{dec:.6f},{r_deg:.5f})) "
          "AND parallax_over_error > 5 AND parallax > 0 ORDER BY phot_g_mean_mag")
     try:
@@ -69,7 +69,7 @@ def depth_map(ra_c, dec_c, field_deg, target_name=None):
     from .facts import catalogue_distance_ly, lookback_years
     from .inframe import kind_of
     from .naming import _clean, _readable
-    r_deg = max(field_deg * 0.71, 0.15)
+    r_deg = max(field_deg * 0.71, 0.02)          # just the field (its corners); the map shows only the field
     with ThreadPoolExecutor(2) as ex:
         fg, fs = ex.submit(_gaia, ra_c, dec_c, r_deg), ex.submit(_simbad, ra_c, dec_c, r_deg)
         gaia, sim = fg.result(), fs.result()

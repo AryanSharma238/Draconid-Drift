@@ -58,7 +58,13 @@ def cached_stage(spec):
                        ra0=spec.ra, dec0=spec.dec, epoch0=spec.epoch)
 
 
-req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, key="stage", default=None)
+from drift import library as _lib
+try:
+    _library = _lib.listing()
+    _library = dict(discoveries=_library["discoveries"][:80], library=_library["library"][:120])
+except Exception:
+    _library = dict(discoveries=[], library=[])
+req = stage(presets=presets, mid=float(MID_EPOCH), result=S.result, error=S.error, library=_library, key="stage", default=None)
 
 # Support deep linking via URL query parameters (?ra=...&dec=...&fov=...)
 qp = st.query_params
@@ -80,7 +86,7 @@ if "ra" in qp and "dec" in qp and S.result is None and S.seen is None:
 def _band_jobs():
     """Spectrum jobs started as soon as a target's first view is ready, so they run while the page animates."""
     from concurrent.futures import ThreadPoolExecutor
-    return {}, ThreadPoolExecutor(2)
+    return {}, ThreadPoolExecutor(3)
 
 
 def _band_args(r, key):
@@ -92,8 +98,26 @@ def _band_args(r, key):
             r.get("detector") or "SPHEREx-D3", tuple(tg))
 
 
+def _saturated(r):
+    lc = r.get("lc")
+    return bool(lc) and not lc.get("pts")
+
+
+def start_neowise(r):
+    """SPHEREx saturates on this star: ask NEOWISE for its brightness over 2014-2024 (runs alongside the spectrum)."""
+    jobs, ex = _band_jobs()
+    a = ("neowise", round(float(r["ra"]), 5), round(float(r["dec"]), 5), float(r.get("pmra") or 0), float(r.get("pmdec") or 0),
+         float(r.get("epoch") or MID_EPOCH))
+    if a not in jobs:
+        from drift.neowise import neowise_lc
+        jobs[a] = ex.submit(neowise_lc, *a[1:])
+    return jobs[a]
+
+
 def start_bands(r, key):
     jobs, ex = _band_jobs()
+    if _saturated(r):
+        start_neowise(r)
     a = _band_args(r, key)
     if a not in jobs:
         if len(jobs) > 16:
@@ -154,6 +178,17 @@ if req and req.get("nonce") != S.seen and req.get("type") == "bands":
         try:
             b = cached_bands(*_band_args(r, req.get("key")))
             S.result = dict(r, bands=b["bands"], spectra=b["spectra"])
+            if _saturated(r):
+                try:
+                    lc2 = start_neowise(r).result(timeout=30)
+                except Exception:
+                    lc2 = None
+                if lc2:
+                    S.result = dict(S.result, lc=lc2)
+            try:
+                _lib.record_bands(r["name"], b, lc2 if _saturated(r) else None)
+            except Exception:
+                pass
         except Exception:
             import traceback
             traceback.print_exc()
@@ -194,6 +229,10 @@ if req and req.get("nonce") != S.seen:
                 except Exception:
                     pass
             S.result = payload
+            try:
+                _lib.record(payload, key if key in PRESETS else None, float(req.get("fov") or 0) or None)
+            except Exception:
+                pass
             try:
                 start_bands(payload, key)          # begin the five other detectors now, while the page animates
             except Exception:

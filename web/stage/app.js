@@ -1,4 +1,4 @@
-import { Sky, unit, radec, slerp } from "./sky.js";
+import { Sky, unit, radec, slerp, MAP_URL } from "./sky.js";
 import { renderCutout, SURVEYS } from "./healpix.js";
 import * as intro from "./intro.js";
 import * as depth from "./depth.js";
@@ -91,7 +91,7 @@ async function autoCuts() { return;
     sky.setBlack(v[v.length >> 1] + 6); sky.black = v[v.length >> 1] + 6;
   } catch (e) {}
 }
-let spinning = false;
+let spinning = false, SIDE = false, SY = 1, curMap = "tmass";
 function homeView() { return [0, 0, sky.homeFov()]; }
 function fitBlend() {                              // cover exactly the area outside the all-sky ellipse (measured, not assumed)
   const W = sky.W, H = sky.H, edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
@@ -123,7 +123,7 @@ function bindSky() {
   const rect = () => clip.getBoundingClientRect();
   clip.addEventListener("pointerdown", () => { smoothId++; smoothCv.classList.remove("on"); }, true);
   window.addEventListener("pointerup", () => { if (view === "home" && sky.fov() < 8) setTimeout(refreshSmooth, 200); });
-  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about") && !app.classList.contains("landing");
+  const homeOk = () => view === "home" && !busy && !app.classList.contains("searching") && !app.classList.contains("about");
   // a short hint that follows the cursor the first few seconds it moves over the sky
   let tipUntil = 0, tipDone = false;
   window.addEventListener("pointermove", e => {
@@ -137,9 +137,9 @@ function bindSky() {
     if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); wake();
     const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
     const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
-    const r = rect(), before = sky.pix2world(e.clientX - r.left, e.clientY - r.top);
+    const r = rect(), before = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY);
     sky.a.setFoV(f); fitBlend();
-    const after = sky.pix2world(e.clientX - r.left, e.clientY - r.top), c = sky.center();
+    const after = sky.pix2world(e.clientX - r.left, (e.clientY - r.top) / SY), c = sky.center();
     if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
  clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 300); }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
@@ -151,18 +151,19 @@ function bindSky() {
     if (e.button !== 2) { if (homeOk() && e.button === 0) wake(); return; }
     stop(e); if (!homeOk() || sel) return;
     wake(); const r = rect();
-    sel = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top };
+    sel = { x0: e.clientX - r.left, y0: (e.clientY - r.top) / SY, x1: e.clientX - r.left, y1: (e.clientY - r.top) / SY };
     drawSel(); selEl.classList.add("on"); tipDone = true; tipEl.classList.remove("on");
+    app.classList.add("picking");                                  // the home list steps aside while you pick an area
   };
   clip.addEventListener("pointerdown", begin, true);
   clip.addEventListener("mousedown", e => { if (e.button === 2) stop(e); }, true);
   const drawSel = () => {
-    const l = Math.min(sel.x0, sel.x1), t = Math.min(sel.y0, sel.y1);
-    Object.assign(selEl.style, { left: l + "px", top: t + "px", width: Math.abs(sel.x1 - sel.x0) + "px", height: Math.abs(sel.y1 - sel.y0) + "px" });
+    const r0 = rect(), l = Math.min(sel.x0, sel.x1) + r0.left, t = Math.min(sel.y0, sel.y1) * SY + r0.top;   // the map may be shifted and stretched on the home screen
+    Object.assign(selEl.style, { left: l + "px", top: t + "px", width: Math.abs(sel.x1 - sel.x0) + "px", height: Math.abs(sel.y1 - sel.y0) * SY + "px" });
   };
   window.addEventListener("pointermove", e => {
     if (!sel) return; stop(e);
-    const r = rect(), A = panelA(), dx = e.clientX - r.left - sel.x0, dy = e.clientY - r.top - sel.y0;
+    const r = rect(), A = panelA(), dx = e.clientX - r.left - sel.x0, dy = (e.clientY - r.top) / SY - sel.y0;
     const w = Math.max(Math.abs(dx), Math.abs(dy) / A);          // locked to the panels' tall shape, like a photo crop
     sel.x1 = sel.x0 + Math.sign(dx || 1) * w; sel.y1 = sel.y0 + Math.sign(dy || 1) * w * A; drawSel();
   }, true);
@@ -171,6 +172,7 @@ function bindSky() {
   window.addEventListener("pointerup", async e => {
     if (!sel || e.button !== 2) return; stop(e);
     const s0 = sel; sel = null;
+    setTimeout(() => { if (!busy) app.classList.remove("picking"); }, 400);
     const l = Math.min(s0.x0, s0.x1), r_ = Math.max(s0.x0, s0.x1), t = Math.min(s0.y0, s0.y1), b = Math.max(s0.y0, s0.y1);
     const cx = (l + r_) / 2, cy = (t + b) / 2;
     if (r_ - l < 4 || b - t < 4) { selEl.classList.remove("on"); return; }
@@ -286,6 +288,8 @@ function makeOverlay() {
 
 async function go(item) {
   if (busy && view !== "view") return;
+  leaveLanding();
+  if (curMap !== "tmass") setMap("tmass");
   if (app.classList.contains("deep")) exitDepth();
   closeSearch(true); closeAbout();
   if (view === "view") {                           // from the three panels: dim them away, the sky fades in behind, then fly on
@@ -393,7 +397,7 @@ async function tryReveal() {
   const tweenPromise = tween(1100, t => {
     const p = smooth(t), w = S * (1 + (k - 1) * p), h = w * A, cx = W / 2 + dx * p, cy = H / 2 + dy * p;
     inner.style.transform = `translate(${dx * p}px,${dy * p}px) scale(${1 + (k - 1) * p})`;
-    clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${26 * smooth(clamp01(p * 1.3))}px)`;
+    clip.style.clipPath = `inset(${cy - h / 2}px ${W - cx - w / 2}px ${H - cy - h / 2}px ${cx - w / 2}px round ${6 * smooth(clamp01(p * 1.3))}px)`;
   });
 
   await tweenPromise;
@@ -424,6 +428,7 @@ async function leave(fromError = false) {
   clip.style.clipPath = "inset(0 0 0 0 round 0px)"; inner.style.transform = "none"; clip.style.visibility = "visible";
   if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
   setView("flying");
+  app.classList.add("landing", "side"); SIDE = true; placeSide();
   const c = sky.center();
   await flyHome(c[0], 0, sky.homeFov(), 3200);
   setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
@@ -463,19 +468,23 @@ function fillPage(res) {
   const where = f.constellation ? `in ${f.constellation}` : "";
   $("iKind").textContent = f.kind ? `${f.kind}${where ? " · " + where : ""}` : `Patch of sky ${where}`.trim();
   let row;
-  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).filter(o => inView(res, o)).length, "objects listed") + fact(res.visits, "SPHEREx visits");
+  if (!f.kind) row = fact(`${fmtN(f.field_arcmin || res.field_deg * 60, 1)}′`, "field width") + fact((res.objects || []).length, "objects listed") + fact(res.visits, "SPHEREx visits");
   else if (f.galaxy) row = fact(f.redshift != null ? `z ${fmtN(f.redshift, Math.abs(f.redshift) < 0.1 ? 4 : 3)}` : null, f.redshift < 0 ? "moving toward us" : "redshift") + fact(fmtAgo(f.light_years_ago), "light left") + fact(f.size_arcmin ? `${fmtN(f.size_arcmin, 1)}′` : null, "size on sky");
   else row = fact(fmtLy(f.distance_ly), "distance") + fact(f.temp_k ? `≈${fmtN(f.temp_k)} K` : null, "surface temp") + fact(f.motion_arcsec_yr != null ? `${fmtN(f.motion_arcsec_yr, f.motion_arcsec_yr < 1 ? 2 : 1)}″/yr` : null, "motion on sky");
   $("iFacts").innerHTML = row;
   const [a, b] = sexa(res.ra, res.dec);
   $("iCoord").textContent = `${a}   ${b}`;
   $("iSrc").textContent = res.visits ? `${res.visits} SPHEREx visits · ${monthYr(res.span?.[0])} – ${monthYr(res.span?.[1])}` : "";
-  const lc = res.lc;
-  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}</span>` : `<span class="dim">Too few clean exposures to tell</span>`;
+  paintLc(res.lc);
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
   drawSpectrum(); buildWave(res);
+}
+function paintLc(lc) {
+  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}${lc.src ? `<small class="lcsrc">${lc.src}</small>` : ""}</span>`
+    : `<span class="dim">Too few clean exposures to tell</span>`;
+  if (lc && !(lc.pts && lc.pts.length)) $("iLc").querySelector("span").insertAdjacentHTML("beforeend", `<small class="lcsrc">Checking NEOWISE instead…</small>`);
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
@@ -571,6 +580,8 @@ function showBand(d) {
 })();
 function onBands(res) {                             // the other five ranges and the spectra have arrived
   last_res = Object.assign(last_res || {}, { bands: res.bands, spectra: res.spectra });
+  if (res.lc && res.lc.src) { last_res.lc = res.lc; paintLc(res.lc); }
+  else if (last_res.lc && !(last_res.lc.pts && last_res.lc.pts.length)) $("iLc").querySelectorAll(".lcsrc").forEach(e => e.remove());
   buildWave(last_res); drawSpectrum();
   if (bandSel !== detNum(last_res.detector) && bandReady(bandSel)) showBand(bandSel);
 }
@@ -585,7 +596,8 @@ function inView(res, o) {
 }
 function fillObjects(res) {
   const ul = $("iObjs"); ul.innerHTML = ""; hl = null; drawHl();
-  const all = res.objects || [], list = all.filter(o => inView(res, o));   // only what the panels actually show
+  const all = res.objects || [], vis = all.filter(o => inView(res, o));   // only what the panels actually show
+  const list = vis.length ? vis : all;                                    // panels still animating: show them all
   if (!list.length) { ul.innerHTML = `<li class="none">Nothing bright enough to list</li>`; return; }
   list.forEach(o => {
     const li = document.createElement("li");
@@ -778,7 +790,6 @@ let items = [], sel = -1, qid = 0;
 const thumbCache = new Map(), thumbQ = [];
 let thumbBusy = false;
 function openSearch() {
-  leaveLanding();
   if (view !== "home" && view !== "view") return;
   loadCatalog(); closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
   tipEl.classList.remove("on"); showItems(presetItems()); setTimeout(() => qEl.focus(), 120);
@@ -809,7 +820,7 @@ function choose(it) {
 
 function thumb(it, box) {
   const key = it.key + "|" + it.name;
-  if (thumbCache.has(key)) { box.appendChild(thumbCache.get(key).cloneNode(true)); box.firstChild.classList.add("ok"); return; }
+  if (thumbCache.has(key)) { const c = thumbCache.get(key), k = c.cloneNode(); k.getContext("2d").drawImage(c, 0, 0); box.appendChild(k); k.classList.add("ok"); return; }
   thumbQ.push({ it, box, key }); pump();
 }
 async function pump() {
@@ -940,8 +951,15 @@ async function remote(q, my, have) {
 
 /* ---------------------------------------------------------------- top bar */
 let page = null;
+let mathDone = false;
+function typesetMath() {                              // formulas in How it works, rendered once KaTeX has loaded
+  if (mathDone) return;
+  if (!window.renderMathInElement) return setTimeout(typesetMath, 300);
+  try { window.renderMathInElement($("about"), { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "\\(", right: "\\)", display: false }], throwOnError: false }); mathDone = true; } catch (e) {}
+}
 function openAbout(which = "how") {
-  leaveLanding();
+  if (which === "how") typesetMath();
+  if (which === "discoveries" || which === "compare") fillLibrary(which);
   if (busy && view !== "view") return; closeSearch(true); page = which; app.classList.add("about");
   document.querySelectorAll("#about .pg").forEach(d => d.classList.toggle("on", d.dataset.page === which));
   document.querySelectorAll("#bar .navb").forEach(b => b.classList.toggle("on", b.dataset.page === which));
@@ -949,6 +967,68 @@ function openAbout(which = "how") {
 function closeAbout() { page = null; app.classList.remove("about"); document.querySelectorAll("#bar .navb").forEach(b => b.classList.remove("on")); }
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
+
+/* ---------------------------------------------------------------- Discoveries and Compare */
+// Both read the library the server keeps of everything opened so far (Streamlit sends it with every render; the
+// FastAPI server answers /api/stage/library).
+const getLibrary = () => args.library ? Promise.resolve(args.library)
+  : fetch("/api/stage/library").then(r => r.json()).catch(() => ({ discoveries: [], library: [] }));
+const escH = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const whenTxt = t => !t ? "Preset" : new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const entryItem = e => (e.key && e.key !== "custom" && args.presets && args.presets.find(p => p.key === e.key)) ||
+  { key: "custom", name: e.name, ra: e.ra, dec: e.dec, pmra: e.pmra || 0, pmdec: e.pmdec || 0, epoch: e.epoch || args.mid, fov: e.fov || 300, detector: e.detector || "SPHEREx-D3" };
+async function fillLibrary(which) {
+  const L = await getLibrary();
+  if (which === "discoveries") {
+    const ul = $("dlist"); ul.innerHTML = "";
+    const rows = L.discoveries || [];
+    if (!rows.length) { ul.innerHTML = `<li class="none">Nothing logged yet. Open a fast-moving star to start the log.</li>`; return; }
+    for (const e of rows) {
+      const li = document.createElement("li"), b = document.createElement("button"); b.type = "button";
+      const found = [e.moved_arcsec ? `Moved ${Math.round(e.moved_arcsec)}″ since 2000` : null, e.varies ? `Brightness ${e.lc}` : null].filter(Boolean).join(" · ");
+      b.innerHTML = `<span><b>${escH(e.name)}</b><small>${escH(e.kind || "")}${e.constellation ? " · " + escH(e.constellation) : ""}</small></span>
+        <span class="f">${escH(found)}</span><span>${escH(e.moved_arcsec ? (e.conf || "—") : "—")}</span><span>${e.distance_ly ? fmtLy(e.distance_ly) : "—"}</span><span>${whenTxt(e.first || e.when)}</span>`;
+      b.onclick = () => { closeAbout(); choose(entryItem(e)); };
+      li.appendChild(b); ul.appendChild(li);
+    }
+    return;
+  }
+  const lib = L.library || [], sA = $("cA"), sB = $("cB");
+  const keep = [sA.value, sB.value];
+  const opts = lib.map((e, i) => `<option value="${i}">${escH(e.name)}</option>`).join("");
+  sA.innerHTML = opts; sB.innerHTML = opts;
+  const idx = n => Math.max(0, lib.findIndex(e => e.name === n));
+  sA.value = keep[0] ? idx(lib[+keep[0]] ? lib[+keep[0]].name : "") : 0;
+  sB.value = keep[1] ? keep[1] : Math.min(1, lib.length - 1);
+  const draw = () => drawCompare(lib[+sA.value], lib[+sB.value]);
+  sA.onchange = draw; sB.onchange = draw; draw();
+}
+function drawCompare(a, b) {
+  if (!a || !b) { $("ctable").innerHTML = `<p class="dim">Open at least two objects to compare them.</p>`; $("cspec").innerHTML = ""; return; }
+  const row = (label, f) => `<tr><th>${label}</th><td>${f(a) ?? "—"}</td><td>${f(b) ?? "—"}</td></tr>`;
+  $("ctable").innerHTML = `<table><tr><th></th><th class="ca">${escH(a.name)}</th><th class="cb">${escH(b.name)}</th></tr>
+    ${row("What it is", e => escH(e.kind))}
+    ${row("Distance", e => e.distance_ly ? fmtLy(e.distance_ly) : null)}
+    ${row("Surface temperature", e => e.temp_k ? `≈${fmtN(e.temp_k)} K` : null)}
+    ${row("Motion on the sky", e => e.motion != null ? `${fmtN(e.motion, e.motion < 1 ? 2 : 1)}″/yr` : null)}
+    ${row("Moved since 2000", e => e.moved_arcsec ? `${Math.round(e.moved_arcsec)}″` : null)}
+    ${row("Brightness over time", e => escH(e.lc))}
+    ${row("Objects in the frame", e => e.n_objects)}
+    ${row("SPHEREx visits", e => e.visits)}
+    ${row("Spectral features", e => e.spectrum && e.spectrum.features && e.spectrum.features.length ? escH([...new Set(e.spectrum.features)].join(", ")) : null)}</table>`;
+  // spectra on one chart: each divided by its own median so shapes compare, log wavelength from 0.75 to 5 µm
+  const W = 760, H = 240, P = 36, lx = w => P + (Math.log(w) - Math.log(0.75)) / (Math.log(5) - Math.log(0.75)) * (W - 2 * P);
+  const series = [[a, "#e8be8c"], [b, "#8fb8ff"]].filter(([e]) => e.spectrum && e.spectrum.pts && e.spectrum.pts.length > 3);
+  if (!series.length) { $("cspec").innerHTML = `<p class="dim">No spectrum yet. Open each object once; its spectrum is measured while you look.</p>`; return; }
+  const norm = series.map(([e, c]) => { const v = e.spectrum.pts.map(p => p[1]).sort((x, y) => x - y), m = v[v.length >> 1]; return [e, c, e.spectrum.pts.map(p => [p[0], p[1] / m])]; });
+  const all = norm.flatMap(s => s[2].map(p => p[1])), hi = Math.max(1.5, ...all), lo = Math.min(0.5, ...all);
+  const ly = v => H - P - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (H - 2 * P);
+  const ticks = [1, 2, 3, 4, 5].map(w => `<line x1="${lx(w)}" x2="${lx(w)}" y1="${H - P}" y2="${H - P + 5}" stroke="rgba(255,255,255,.3)"/><text x="${lx(w)}" y="${H - P + 18}" text-anchor="middle">${w}${w === 5 ? " µm" : ""}</text>`).join("");
+  const lines = norm.map(([e, c, pts]) => `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${lx(p[0]).toFixed(1)},${ly(p[1]).toFixed(1)}`).join("")}" fill="none" stroke="${c}" stroke-width="2"/>`).join("");
+  const key = norm.map(([e, c], i) => `<text x="${P + i * 220}" y="18" style="fill:${c};font-weight:600">${escH(e.name)}</text>`).join("");
+  $("cspec").innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="cchart"><line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="rgba(255,255,255,.2)"/>${ticks}${lines}${key}</svg>
+    <p class="dim">Each spectrum is divided by its own median, so the chart compares shapes (colour and molecular dips), not brightness.</p>`;
+}
 
 /* ---------------------------------------------------------------- Explore Side Drawer & Movers Catalog */
 const MOVER_CATALOG = [
@@ -1039,21 +1119,176 @@ initSideDrawer();
 /* ---------------------------------------------------------------- landing: Demo / Explore */
 app.classList.add("landing");
 intro.preload().catch(() => {});
-const leaveLanding = () => app.classList.remove("landing");
+const leaveLanding = () => { app.classList.remove("landing", "picking", "side"); SIDE = false; placeSide(); };
+const BLURB = { barnard: "Watch the fastest star in our sky move", epsindi: "A brown dwarf pair, 12 light years away",
+  wise0855: "Meet the coldest known brown dwarf", rwaur: "A young star wrapped in dust", rdra: "A giant star that pulses" };
 function fillStarts() {
   const sl = $("startList"); if (!sl || sl.childElementCount || !args || !args.presets || !args.presets.length) return;
-  presetItems().slice(0, 4).forEach(p => { const b = document.createElement("button"); b.type = "button";
-    b.textContent = p.name; b.onclick = () => { leaveLanding(); choose(p); }; sl.appendChild(b); });
-  sl.parentNode.classList.add("ready");
+  presetItems().slice(0, 5).forEach(p => {
+    const li = document.createElement("li"), b = document.createElement("button"); b.type = "button";
+    b.innerHTML = `<div class="th"></div><div class="tx"><b></b><small></small></div><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>`;
+    b.querySelector("b").textContent = p.name; b.querySelector("small").textContent = BLURB[p.key] || p.kind || "";
+    b.onclick = () => { leaveLanding(); choose(p); }; li.appendChild(b); sl.appendChild(li); thumb(p, b.querySelector(".th"));
+  });
 }
 fillStarts(); setInterval(fillStarts, 500);
-$("exploreBtn").onclick = () => {
-  leaveLanding();
-  openDrawer();
+// the home list's search box drives the same search as the bar's: type here, results drop from the bar
+{
+  const lq = $("lq");
+  lq.addEventListener("input", () => {
+    if (!sEl.classList.contains("open")) { loadCatalog(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true"); }
+    qEl.value = lq.value; qEl.dispatchEvent(new Event("input"));
+  });
+  lq.addEventListener("keydown", e => { if (["Enter", "ArrowDown", "ArrowUp", "Escape"].includes(e.key)) { qEl.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true })); if (e.key === "Escape") { lq.value = ""; closeSearch(); } e.preventDefault(); } });
+}
+$("demoBtn").onclick = () => {                      // the film, full screen; when it ends the site slides in and the tour starts
+  const box = $("demo"), v = $("demoV");
+  let done = false;
+  const finish = (ended) => {
+    if (done) return; done = true;
+    box.classList.remove("on"); enterSide();
+    setTimeout(() => { v.pause(); v.currentTime = 0; }, 900);
+    if (ended === true) setTimeout(startTour, 1400);
+  };
+  box.classList.add("on"); v.currentTime = 0;
+  v.play().catch(() => finish(false));                // cannot play (no video support): go straight to the site
+  v.onended = () => finish(true); $("demoSkip").onclick = () => finish(false);
+  window.addEventListener("keydown", function k(e) { if (e.key === "Escape") { window.removeEventListener("keydown", k); finish(false); } });
 };
-$("demoBtn").onclick = () => {
-  intro.play({ onSiteReveal: leaveLanding, onDone: () => {} }).catch(leaveLanding);   // no WebGL: go straight to the site
-};
+$("exploreBtn").onclick = () => enterSide();
+
+/* ---------------------------------------------------------------- home, stage 2: the globe on the right half */
+// the globe is drawn smaller and slid right so it sits beside the list instead of under it; zoom in and it fills the window
+function sideGeom() {
+  const W = sky.W, lp = document.querySelector("#land .lside").getBoundingClientRect();
+  const left = Math.min(lp.right + 24, W * 0.6), ws = Math.max(280, W - left - 24);
+  return { left, ws, dx: left + ws / 2 - W / 2, dy: -34 };
+}
+function placeSide() {
+  // the whole-sky ellipse is twice as wide as tall, the space beside the list is taller than that: stretch it a
+  // little upright (at most 14%) so it fills the space better. Clicks and selections divide the stretch back out.
+  SY = 1;
+  if (SIDE) {
+    const { ws } = sideGeom(), eh = 0.93 * ws / 2, room = sky.H - 96 - 110;
+    SY = Math.max(1, Math.min(1.14, room / eh));
+  }
+  const t = SIDE ? (({ dx, dy }) => `translate(${dx}px,${dy}px) scale(1,${SY.toFixed(3)})`)(sideGeom()) : "";
+  clip.style.transform = t; $("blend").style.transform = t;
+  if (SIDE) { const g = sideGeom(); app.style.setProperty("--ctrlx", (g.left + g.ws / 2) + "px"); }
+}
+{
+  const full = sky.homeFov.bind(sky);
+  sky.homeFov = (topPad = 90) => {                   // fov that fits the whole ellipse in the space it has
+    if (!SIDE) return full(topPad);
+    const W = sky.W, H = sky.H, { ws } = sideGeom();
+    return 360 * Math.max(W / (0.93 * ws), W / (2 * (H - topPad - 16 - 80)));
+  };
+}
+function enterSide() {
+  if (SIDE && app.classList.contains("side")) return;
+  app.classList.add("landing", "side"); SIDE = true;
+  requestAnimationFrame(() => {
+    placeSide();
+    if (view === "home") { const f0 = sky.fov(), f1 = sky.homeFov(); tween(1100, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); }
+  });
+}
+window.addEventListener("resize", () => { if (SIDE) { placeSide(); if (view === "home" && sky.fov() > 100) sky.a.setFoV(sky.homeFov()); } });
+// map controls under the globe: which wavelength the map shows, and zoom
+const MAPS = { dss: SURVEYS.dss.url, tmass: MAP_URL, wise: SURVEYS.wise.url };
+function setMap(k) {
+  try { sky.a.setImageSurvey(MAPS[k]); } catch (e) { try { sky.a.setBaseImageLayer(MAPS[k]); } catch (e2) {} }
+  document.querySelectorAll("#land .wl button").forEach(b => { const on = b.dataset.map === k; b.classList.toggle("on", on); b.setAttribute("aria-checked", on); });
+  curMap = k;
+}
+document.querySelectorAll("#land .wl button").forEach(b => b.onclick = () => setMap(b.dataset.map));
+const zoomBy = k => { wake(); const f0 = sky.fov(), f1 = Math.min(sky.homeFov(), Math.max(0.02, f0 * k)); tween(450, t => { sky.a.setFoV(Math.exp(Math.log(f0) + (Math.log(f1) - Math.log(f0)) * smooth(t))); fitBlend(); }); };
+$("zIn").onclick = () => zoomBy(0.5); $("zOut").onclick = () => zoomBy(2);
+$("zHome").onclick = () => { wake(); const c = sky.center(); flyHome(c[0], 0, sky.homeFov(), 1200).then(() => { fitBlend(); }); };
+
+/* ---------------------------------------------------------------- the guided tour */
+// Runs after the demo film (or from Tour in the top bar): opens WISE 0855-0714 and walks through every feature.
+// A ring stands in for the mouse: it glides to what it is about to press and pulses, then the page really does it.
+let touring = false, tourStep = null;
+const tourEl = $("tour"), curEl = $("tourCur"), hlEl = $("tourHl");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const waitFor = async (ok, ms) => { const t0 = performance.now(); while (!ok()) { if (!touring || performance.now() - t0 > ms) return false; await sleep(150); } return true; };
+function hilite(el) {
+  if (!el) { hlEl.classList.remove("on"); return null; }
+  const r = el.getBoundingClientRect();
+  Object.assign(hlEl.style, { left: (r.left - 6) + "px", top: (r.top - 6) + "px", width: (r.width + 12) + "px", height: (r.height + 12) + "px" });
+  hlEl.classList.add("on"); return r;
+}
+function say(text, el, n, next = "Next") {
+  const r = hilite(el);
+  $("tourTx").innerHTML = text; $("tourN").textContent = n || ""; $("tourNext").textContent = next; $("tourNext").style.display = next ? "" : "none";
+  tourEl.classList.add("on");
+  const W = innerWidth, H = innerHeight, bw = Math.min(360, W - 32), bh = tourEl.offsetHeight || 150;
+  let x = W / 2 - bw / 2, y = H - bh - 30;
+  if (r) {                                             // beside the thing it explains, wherever there is room
+    if (r.right + bw + 24 < W) { x = r.right + 18; y = r.top; }
+    else if (r.left - bw - 24 > 0) { x = r.left - bw - 18; y = r.top; }
+    else { x = Math.min(Math.max(16, r.left), W - bw - 16); y = r.bottom + bh + 30 < H ? r.bottom + 14 : Math.max(16, r.top - bh - 14); }
+  }
+  Object.assign(tourEl.style, { left: x + "px", top: Math.min(Math.max(16, y), H - bh - 16) + "px", width: bw + "px" });
+  // no clicking needed: each step moves on by itself once there has been time to read it (Next skips ahead)
+  clearTimeout(say.t); const bar = $("tourBar");
+  if (next && next !== "Finish") {
+    const ms = Math.max(4000, 2000 + 280 * $("tourTx").textContent.split(/\s+/).length);
+    bar.style.transition = "none"; bar.style.width = "0%"; void bar.offsetWidth;
+    bar.style.transition = `width ${ms}ms linear`; bar.style.width = "100%";
+    say.t = setTimeout(() => { const f = tourStep; tourStep = null; if (f) f(true); }, ms);
+  } else { bar.style.transition = "none"; bar.style.width = "0%"; }
+  return new Promise(res => { tourStep = res; });
+}
+async function fakeClick(el) {                       // glide the ring there, pulse, then press for real
+  if (!el || !touring) return;
+  const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+  curEl.classList.add("on"); await sleep(30);
+  curEl.style.transform = `translate(${x}px,${y}px)`; await sleep(900);
+  curEl.classList.add("press"); await sleep(380); curEl.classList.remove("press");
+  el.click(); await sleep(250); curEl.classList.remove("on");
+}
+$("tourNext").onclick = () => { clearTimeout(say.t); const f = tourStep; tourStep = null; if (f) f(true); };
+$("tourSkip").onclick = () => endTour();
+function endTour() {
+  clearTimeout(say.t); touring = false; tourEl.classList.remove("on"); curEl.classList.remove("on"); hlEl.classList.remove("on");
+  const f = tourStep; tourStep = null; if (f) f(false);
+}
+async function startTour() {
+  if (touring) return; touring = true;
+  closeAbout(); closeSearch(true);
+  if (view !== "home") { await leave(); await waitFor(() => view === "home", 8000); }
+  enterSide(); await sleep(1200);
+  const steps = 7; let n = 0; const N = () => `${++n} / ${steps}`;
+  const S = q => document.querySelector(q);
+  await waitFor(() => S("#startList li"), 6000);
+  const btn = [...document.querySelectorAll("#startList button")].find(b => /WISE 0855/.test(b.textContent)) || S("#startList button");
+  if (!touring || !btn) return endTour();
+  // no button to press here: the ring picks WISE 0855-0714 by itself
+  hilite(btn); btn.classList.add("tour"); await sleep(700); await fakeClick(btn); btn.classList.remove("tour");
+  say("Flying there and loading every SPHEREx image of this spot…", null, "", "");
+  if (!await waitFor(() => view === "view", 120000)) return endTour();
+  await sleep(900);
+  if (!await say("<b>Then and now.</b> Left: the sky years ago. Right: SPHEREx today. The rings show where the star was and is.", S("#page2"), N())) return;
+  if (!await say("<b>Wavelength.</b> Six ranges from 0.75 to 5 µm. Click one to switch.", S("#foot #wave"), N())) return;
+  if (!await say("<b>The star.</b> Distance, temperature, spectrum and brightness over time.", S("#info"), N())) return;
+  if (!await say("<b>In the frame.</b> Everything bright here. Hover one to ring it.", S("#iObjs"), N())) return;
+  // no button to press here either: the ring opens the 3D map
+  const tb = S("#timeBtn"); hilite(tb); await sleep(600); await fakeClick(tb);
+  say("Placing every star and galaxy at its distance…", null, "", "");
+  await waitFor(() => depthOpen, 45000); await sleep(800);
+  if (!touring) return;
+  if (!await say("<b>3D map.</b> Each object at its real distance. Drag to turn, slide to travel in time.", S("#pDepth"), N())) return;
+  if (app.classList.contains("deep")) exitDepth();
+  const db = document.querySelector('#bar .navb[data-page="discoveries"]'); hilite(db); await sleep(500); await fakeClick(db); await sleep(700);
+  if (!await say("<b>Discoveries.</b> Every star the pipeline caught moving or changing. Click one to fly there.", $("dlist"), N())) return;
+  closeAbout();
+  if (!await say("That's it. Back to the sky.", null, `${steps} / ${steps}`, "Finish")) return;
+  touring = false; tourEl.classList.remove("on"); hlEl.classList.remove("on");
+  if (app.classList.contains("deep")) exitDepth();
+  await leave();
+}
+window.addEventListener("resize", () => { if (touring && tourStep) hlEl.classList.remove("on"); });
 
 /* ---------------------------------------------------------------- past & future: the 3D depth view */
 let depthOpen = false;

@@ -38,6 +38,7 @@ STAGE_DIR = HERE / "data" / "stage"
 FRONTEND_DIST = HERE / "frontend" / "dist"
 CATALOG_JSON = HERE / "web" / "stage" / "catalog.json"
 
+_NEO: dict = {}
 app = FastAPI(title="Draconid Drift Stage Server")
 app.add_middleware(
     CORSMiddleware,
@@ -265,7 +266,7 @@ def api_go(req: GoRequest) -> JSONResponse:
             t.detector,
         )
     else:
-        fov = min(max(float(req.fov or 180.0), 60.0), 5400.0)
+        fov = min(max(float(req.fov or 180.0), 60.0), 18000.0)
         req_name = req.name
         if req_name in (None, "", "Selected area", "Selected patch"):
             from drift.naming import name_field
@@ -299,9 +300,22 @@ def api_go(req: GoRequest) -> JSONResponse:
             except Exception:
                 pass
         try:
+            from drift import library as _lib
+            _lib.record(payload, key if key in PRESETS else None, float(req.fov or 0) or None)
+        except Exception:
+            pass
+        try:
             _start_bands(payload, key)
         except Exception:
             pass
+        if payload.get("lc") and not payload["lc"].get("pts"):      # too bright for SPHEREx: ask NEOWISE alongside
+            try:
+                from drift.neowise import neowise_lc
+                _NEO[payload["name"]] = _NAME_EX.submit(neowise_lc, float(payload["ra"]), float(payload["dec"]),
+                                                        float(payload.get("pmra") or 0), float(payload.get("pmdec") or 0),
+                                                        float(payload.get("epoch") or MID_EPOCH))
+            except Exception:
+                pass
         return JSONResponse(payload)
     except pipeline.DataFetchError as e:
         return JSONResponse(
@@ -326,10 +340,32 @@ def api_bands(req: BandsRequest) -> JSONResponse:
             b = fut.result()
         else:
             b = _compute_bands(*a)
-        return JSONResponse({"bands": b.get("bands", []), "spectra": b.get("spectra", {})})
+        out = {"bands": b.get("bands", []), "spectra": b.get("spectra", {})}
+        lc2 = None
+        fut = _NEO.pop(r.get("name"), None)
+        if fut is not None:
+            try:
+                lc2 = fut.result(timeout=30)
+            except Exception:
+                lc2 = None
+            if lc2:
+                out["lc"] = lc2
+        try:
+            from drift import library as _lib
+            _lib.record_bands(r.get("name"), b, lc2)
+        except Exception:
+            pass
+        return JSONResponse(out)
     except Exception:
         traceback.print_exc()
         return JSONResponse({"bands": [], "spectra": {}})
+
+
+@app.get("/api/stage/library")
+def api_library() -> JSONResponse:
+    from drift import library as _lib
+    d = _lib.listing()
+    return JSONResponse(dict(discoveries=d["discoveries"][:80], library=d["library"][:120]))
 
 
 @app.post("/api/stage/depth")

@@ -1,13 +1,5 @@
 // The sky: one Aladin Lite instance driven by hand, so every animation frame is under our control.
-const ALADIN_URL = "https://cdn.jsdelivr.net/npm/aladin-lite@3.8.2/dist/aladin.js";
-let _A = null;
-async function loadAladin() {
-  if (!_A) {
-    const mod = await import(/* @vite-ignore */ ALADIN_URL);
-    _A = mod.default || mod;
-  }
-  return _A;
-}
+import A from "https://cdn.jsdelivr.net/npm/aladin-lite@3.8.2/dist/aladin.js";
 
 export const MAP_URL = "https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color";   // sharp 2MASS colour map for browsing and the flight
 const R = Math.PI / 180;
@@ -29,7 +21,6 @@ export function slerp(u, v, t) {
 export class Sky {
   constructor(el) { this.el = el; this.a = null; this.spin = { on: false, v: 0, vt: 0, raw: 0, id: 0 }; this.clock = null; }
   async init() {
-    const A = await loadAladin();
     await A.init;
     const off = {};
     ["Fullscreen","Zoom","Layers","Goto","SimbadPointer","CooGrid","Settings","Share","Frame","Projection","StatusBar",
@@ -51,7 +42,6 @@ export class Sky {
   setBlack(v) {}
   grid(on) { try { on ? this.a.showCooGrid() : this.a.hideCooGrid(); } catch (e) {} }
   pix2world(x, y) { try { const r = this.a.pix2world(x, y); return r && isFinite(r[0]) ? [r[0], r[1]] : null; } catch (e) { return null; } }
-  world2pix(ra, dec) { try { const p = this.a.world2pix(ra, dec); return p && isFinite(p[0]) ? [p[0], p[1]] : null; } catch (e) { return null; } }
   /** FoV (deg across the viewport width) that shows the whole AIT ellipse inside the window, below the top bar. */
   homeFov(topPad = 90) {
     const W = this.W, H = this.H;

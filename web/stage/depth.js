@@ -47,7 +47,7 @@ export async function open(el, data, res) {
   const place = (x, y, ly) => { const s = sOf(ly) * DEC, k = unit(s); return new T.Vector3(s, y * k, x * k); };
 
   // the patch: a pyramid from Earth, with a frame at each power of ten
-  const smax = 10.3 * DEC, edge = new T.LineBasicMaterial({ color: 0x8d5760, transparent: true, opacity: .2 });
+  const smax = 10.3 * DEC, edge = new T.LineBasicMaterial({ color: 0x8a5a62, transparent: true, opacity: .2 });
   for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]])
     world.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0, 0, 0), new T.Vector3(smax, a * HALF * smax, b * HALF * smax)]), edge));
   for (let k = 1; k <= 10; k++) {

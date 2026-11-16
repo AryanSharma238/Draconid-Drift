@@ -46,6 +46,15 @@ def make_grid(ra, dec, fov_arcsec, scale_arcsec=SPHEREX_PIXEL_ARCSEC):
     return g.wcs(), (g.npix, g.npix)
 
 
+def pixscale(cube) -> float:
+    """Arcsec per pixel of a cube (6.15 at native resolution, coarser for wide fields)."""
+    try:
+        s = abs(float(cube.wcs.wcs.cdelt[1])) * 3600.0
+        return s if s > 0 else SPHEREX_PIXEL_ARCSEC
+    except Exception:
+        return SPHEREX_PIXEL_ARCSEC
+
+
 def frames_to_cube(frames: list[Frame], grid: Grid, detector: str, source: str = "S3-DIRECT", n_found: int = 0) -> Cube:
     """Convert processed `backend.models.Frame` objects into a `Cube`."""
     if not frames:

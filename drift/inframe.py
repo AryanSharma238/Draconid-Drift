@@ -199,7 +199,9 @@ def in_frame(cube, year=2026.0, stack=None):
     if peaks:
         top = peaks[0][0]
         for f, x, y in peaks:
-            if f < BRIGHT_FRAC * top or len(out) >= MAX_ITEMS:
+            # every clean peak already stands > 6 sigma above the sky; a very bright star must not hide the rest,
+            # so only drop the truly faint ones (under 0.03% of the brightest) once a few objects are listed
+            if len(out) >= MAX_ITEMS or (f < 0.0003 * top and len(out) >= 4):
                 break
             near = [o for o in sim if np.hypot(o["x"] - x, o["y"] - y) * SPX_ARCSEC <= max(MATCH_ARCSEC, o["size"] / 2)]
             if near:

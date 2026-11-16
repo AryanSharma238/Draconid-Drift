@@ -47,7 +47,7 @@ export async function open(el, data, res) {
   const place = (x, y, ly) => { const s = sOf(ly) * DEC, k = unit(s); return new T.Vector3(s, y * k, x * k); };
 
   // the patch: a pyramid from Earth, with a frame at each power of ten
-  const smax = 10.3 * DEC, edge = new T.LineBasicMaterial({ color: 0x8d5760, transparent: true, opacity: .6 });
+  const smax = 10.3 * DEC, edge = new T.LineBasicMaterial({ color: 0x8d5760, transparent: true, opacity: .2 });
   for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]])
     world.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0, 0, 0), new T.Vector3(smax, a * HALF * smax, b * HALF * smax)]), edge));
   for (let k = 1; k <= 10; k++) {
@@ -64,7 +64,7 @@ export async function open(el, data, res) {
   const dot = tex([[0, "#fff"], [.22, "rgba(255,255,255,.55)"], [1, "rgba(255,255,255,0)"]], 64);
   const disc = tex([[0, "rgba(255,245,235,1)"], [.18, "rgba(220,200,255,.75)"], [.7, "rgba(170,140,240,.25)"], [1, "rgba(0,0,0,0)"]], 128);
   const COL = { star: 0xffe6c8, galaxy: 0xd8c4ff, quasar: 0x8fd0ff };
-  const objs = (data.objects || []).map(o => {
+  const objs = (data.objects || []).filter(o => Math.abs(o.x) <= R * 1.02 + (o.size || 0) / 120 && Math.abs(o.y) <= R * 1.02 + (o.size || 0) / 120).map(o => {   // only what is inside this patch
     const big = o.cls !== "star" && o.size;
     const m = new T.SpriteMaterial({ map: big ? disc : dot, color: COL[o.cls] || COL.star, transparent: true, depthWrite: false, blending: T.AdditiveBlending });
     const sp = new T.Sprite(m);
@@ -75,7 +75,7 @@ export async function open(el, data, res) {
   const target = (res.facts && res.facts.kind) ? objs.find(sp => sameName(sp.userData.o.name, res.name)) : null;
   const trailPos = new Float32Array(Math.max(1, objs.length) * 6), trailGeo = new T.BufferGeometry();
   trailGeo.setAttribute("position", new T.BufferAttribute(trailPos, 3));
-  const trails = new T.LineSegments(trailGeo, new T.LineBasicMaterial({ color: 0xe8be8c, transparent: true, opacity: .75 })); world.add(trails);
+  const trails = new T.LineSegments(trailGeo, new T.LineBasicMaterial({ color: 0xe8be8c, transparent: true, opacity: .32 })); world.add(trails);
   const shellMat = new T.MeshBasicMaterial({ color: 0xe8be8c, transparent: true, opacity: 0, side: T.DoubleSide, depthWrite: false });
   const shell = new T.Mesh(new T.PlaneGeometry(1, 1), shellMat); shell.rotation.y = Math.PI / 2; world.add(shell);
 
@@ -84,7 +84,7 @@ export async function open(el, data, res) {
   const nearest = objs.filter(sp => sp.userData.o.cls === "star").sort((a, b) => a.userData.o.ly - b.userData.o.ly)[0];
   const labelled = [...new Set([target, nearest, ...objs.filter(sp => sp.userData.o.cls === "quasar").slice(0, 2), ...ranked.slice(0, 6)].filter(Boolean))].slice(0, 9);
   tags.innerHTML = "";
-  function mk(a, b, cls) { const d = document.createElement("div"); d.className = "dtag " + cls; d.innerHTML = `<b>${esc(a)}</b><span>${esc(b)}</span>`; tags.appendChild(d); return d; }
+  function mk(a, b, cls) { const d = document.createElement("div"); d.className = "dtag " + cls; d.innerHTML = `<b>${esc(a)}</b><span>${esc(b)}</span><em></em>`; tags.appendChild(d); return d; }
   const tagEls = [{ el: mk("Earth", "you are here", "earth"), obj: earth }]
     .concat(labelled.map(sp => ({ el: mk(sp.userData.o.name, fmtLy(sp.userData.o.ly), sp === target ? "tgt" : ""), obj: sp })));
 
@@ -92,8 +92,9 @@ export async function open(el, data, res) {
   // axes), shift-drag or right-drag to slide along the distance axis, scroll to zoom. The distance scale is drawn
   // on the axis itself, so it stays true from every angle.
   const ss = objs.map(sp => sOf(sp.userData.o.ly)), lo = ss.length ? Math.min(...ss) : 0, hi = ss.length ? Math.max(...ss) : 4;
-  let cx = (Math.max(0, lo - 0.6) + Math.min(10.3, hi + 0.4)) / 2 * DEC, span = Math.max(3 * DEC, Math.min(10.8, hi - Math.max(0, lo - 0.6) + 1.2) * DEC);
-  cx = Math.max(cx, span / 2 - 0.08 * span);
+  // start with everything in view: Earth at the near end, the farthest object at the far end, with a margin
+  const far = Math.min(10.3, hi + 0.5) * DEC;
+  let cx = far / 2, span = Math.max(3 * DEC, far * 1.18 + 1.2);
   let yaw = 0, pitch = 0.18, roll = 0.5, time = 0, W = 1, H = 1;
   const size = () => { const r = el.getBoundingClientRect(); W = r.width; H = r.height; renderer.setSize(W, H, false); };
   size(); const ro = new ResizeObserver(size); ro.observe(el);
@@ -163,6 +164,13 @@ export async function open(el, data, res) {
   function placeTags() {
     const used = [];
     for (const t of tagEls) {
+      const o = t.obj.userData && t.obj.userData.o;
+      if (o) {                                         // distance now, and how much it has changed
+        const now = t.obj.userData.now, dl = now - o.ly, sp = t.el.children[1], em = t.el.children[2];
+        const txt = fmtLy(now); if (sp.textContent !== txt) sp.textContent = txt;
+        const dtx = time && Math.abs(dl) >= Math.max(0.005, o.ly * 1e-6) ? `${dl > 0 ? "+" : "−"}${fmtLy(Math.abs(dl))}` : "";
+        if (em.textContent !== dtx) { em.textContent = dtx; em.className = dl > 0 ? "far" : "near"; }
+      }
       const p = scr(t.obj); let y = p.y - 30;
       if (p.x < -40 || p.x > W + 40 || p.y < -20 || p.y > H) { t.el.style.display = "none"; continue; }
       for (let n = 0; n < 6; n++) { const hit = used.find(u => Math.abs(u.x - p.x) < 150 && Math.abs(u.y - y) < 30); if (!hit) break; y = hit.y - 32; }

@@ -23,14 +23,22 @@
   <div id="veil"></div>
 
   <section id="land">
-    <h1>26 years of sky, side by side.</h1>
-    <p class="brand">Draconid Drift</p>
-    <p class="sub">NASA SPHEREx, compared with the sky of 2000.</p>
-    <div class="cta"><button id="demoBtn" type="button">Demo</button><button id="exploreBtn" type="button">Explore</button></div>
+    <div class="lhero">
+      <p class="brand">Draconid Drift</p>
+      <h1>26 years of sky, <br>side by side.</h1>
+      <p class="sub">See how stars, comets and asteroids have moved since 2000, in NASA SPHEREx's 102 infrared colours.</p>
+      <div class="cta"><button id="exploreBtn" type="button">Explore the sky</button><button id="demoBtn" type="button">Watch the demo</button></div>
+    </div>
+    <dl class="lcol">
+      <div><dt>Instrument</dt><dd>NASA SPHEREx</dd></div>
+      <div><dt>Wavelengths</dt><dd>0.75 – 5.0 µm, 102 bands</dd></div>
+      <div><dt>Baseline</dt><dd>2MASS, 2000 · WISE, 2010</dd></div>
+      <div class="starts"><dt>Featured</dt><dd id="startList"></dd></div>
+    </dl>
   </section>
 
   <header id="bar">
-    <button id="brand" type="button">Draconid Drift</button>
+    <button id="brand" type="button"><img src="/icons/favicon.svg" alt="" width="28" height="28">Draconid Drift</button>
     <nav>
       <button class="navb" data-page="challenge" type="button">Challenge</button>
       <button class="navb" data-page="how" type="button">How it works</button>
@@ -76,7 +84,7 @@
     </section>
     <aside class="panel" id="info">
       <div class="head"><h1 class="big" id="iName"></h1><p class="kind" id="iKind"></p>
-        <button id="timeBtn" type="button" title="See this patch in the past and the future (coming next)">Past &amp; future</button></div>
+        <button id="timeBtn" type="button" title="Every star and galaxy in this patch placed at its real distance, moved back and forward in time">3D map: distance &amp; time</button></div>
       <div class="facts" id="iFacts"></div>
       <p class="coord" id="iCoord"></p>
       <div class="blk"><h3 id="specH">Spectrum</h3><div class="spec" id="iSpec"></div></div>

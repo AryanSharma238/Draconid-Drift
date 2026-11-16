@@ -33,6 +33,9 @@ FEATURES = [
 ]
 
 
+_UJY = [UJY_PER_SUM]       # set per cube: pixel area changes for wide (resampled) fields
+
+
 def _ap(img, var, x, y, r=2.0, rin=4.0, rout=6.0):
     yy, xx = np.indices(img.shape)
     d2 = (xx - x) ** 2 + (yy - y) ** 2
@@ -45,7 +48,7 @@ def _ap(img, var, x, y, r=2.0, rin=4.0, rout=6.0):
     n = int(ap.sum())
     f = img[ap].sum() - np.median(bk) * n
     e = np.sqrt(np.nansum(var[ap])) if var is not None else 1.4826 * np.median(np.abs(bk - np.median(bk))) * np.sqrt(n)
-    return float(f) * UJY_PER_SUM, float(e) * UJY_PER_SUM
+    return float(f) * _UJY[0], float(e) * _UJY[0]
 
 
 RINGS = ((2.0, 4.0, 6.0, 8.0), (3.5, 5.5, 8.0, 10.0), (5.0, 7.0, 9.5, 11.5))
@@ -62,7 +65,7 @@ def _ring(img, var, x, y, rr=RINGS[0]):
     if ok.sum() < 0.6 * ring.sum() or bk.size < 5:
         return np.nan, np.nan
     f = (img[ok].sum() - np.median(bk) * ok.sum()) * ring.sum() / ok.sum()
-    return float(f) * UJY_PER_SUM, float(np.sqrt(np.nansum(var[ok]))) * UJY_PER_SUM
+    return float(f) * _UJY[0], float(np.sqrt(np.nansum(var[ok]))) * _UJY[0]
 
 
 def pixel_track(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
@@ -78,6 +81,8 @@ def pixel_track(cube, ra, dec, pmra=0.0, pmdec=0.0, epoch=2026.0):
 def points(cube, track, wings=False):
     """wings: False for aperture photometry, or a ring tuple from RINGS."""
     """[(wl, flux_uJy, err_uJy)] for every usable frame, measured where the source is in that frame."""
+    from .clean import pixscale
+    _UJY[0] = (pixscale(cube) / 206264.806) ** 2 * 1e12
     out = []
     ny, nx = cube.cube.shape[1:]
     for i in range(cube.n):

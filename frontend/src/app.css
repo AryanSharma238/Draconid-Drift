@@ -740,3 +740,41 @@ body{font-size:15px}
 #about .toc{flex-direction:column;flex-wrap:nowrap;gap:8px}
 #about .toc{align-items:flex-start;text-align:left}
 #about .toc{border:0!important;background:none!important;padding:0!important;margin:20px 0 10px}
+
+/* Difference / Stack image processing toolbar */
+.proc-mode{
+  position:absolute;
+  bottom:16px;
+  right:16px;
+  z-index:3;
+  display:flex;
+  gap:6px;
+  background:rgba(13,15,18,0.7);
+  padding:4px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,0.08);
+  backdrop-filter:blur(8px);
+}
+.proc-mode button{
+  padding:4px 9px;
+  font-size:11.5px;
+  font-weight:600;
+  color:rgba(255,255,255,0.7);
+  background:rgba(255,255,255,0.05);
+  border-radius:6px;
+  border:1px solid transparent;
+  transition:all 0.15s ease;
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+}
+.proc-mode button:hover{
+  background:rgba(255,255,255,0.12);
+  color:#fff;
+}
+.proc-mode button.on{
+  background:#7A4A51;
+  color:#fff;
+  border-color:rgba(255,255,255,0.25);
+  box-shadow:0 0 10px rgba(122,74,81,0.5);
+}

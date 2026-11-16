@@ -760,8 +760,30 @@ function ring(g, x, y, size, a = 0.85) {
 
 /* ---------------------------------------------------------------- SPHEREx player */
 let P = null, imgs = [], playing = true, tpos = 0, dragging = false, raf = 0, last = 0, backdrop = null, tmp = null;
+let procMode = "normal"; // "normal" | "diff" | "stack"
+let stackedCv = null;
+
+function computeStack() {
+  if (!imgs.length) return null;
+  const c = document.createElement("canvas");
+  c.width = imgs[0].naturalWidth || imgs[0].width || 512;
+  c.height = imgs[0].naturalHeight || imgs[0].height || 512;
+  const ctx = c.getContext("2d");
+  const count = imgs.length;
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.globalAlpha = 1.0 / count;
+  for (let k = 0; k < count; k++) {
+    ctx.drawImage(imgs[k], 0, 0, c.width, c.height);
+  }
+  ctx.globalAlpha = 1.0;
+  return c;
+}
+
 function loadFrames(res) {
-  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => { imgs = a; });
+  return Promise.all(res.frames.map(b => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(im); im.src = "data:image/jpeg;base64," + b; }))).then(a => {
+    imgs = a;
+    stackedCv = computeStack();
+  });
 }
 function preparePlayer(res) {
   P = res; tpos = 0; playing = true; P.curDates = res.dates; P.curYears = res.years; P.curBase = true;
@@ -797,10 +819,24 @@ function drawSpx() {
   const cw = cv.width, ch = cv.height, S = ch, ox = (cw - S) / 2;
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
   if (backdrop) g.drawImage(backdrop, 0, 0);          // either side of the square field: the sky map, dimmed
-  g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
-  g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
-  if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
-  g.filter = "none";
+
+  if (procMode === "stack" && stackedCv) {
+    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;
+    g.drawImage(stackedCv, ox, 0, S, S);
+    g.filter = "none";
+  } else {
+    g.filter = `blur(${(S / P.nx * 0.08).toFixed(1)}px)`;     // just enough to hide JPEG edges; the 6" pixels show honestly
+    g.globalAlpha = 1; g.drawImage(imgs[i], ox, 0, S, S);
+    if (e > 0.003) { g.globalAlpha = e; g.drawImage(imgs[j], ox, 0, S, S); g.globalAlpha = 1; }
+    g.filter = "none";
+    if (procMode === "diff" && wiseCanvas) {
+      g.save();
+      g.globalCompositeOperation = "difference";
+      g.globalAlpha = 0.85;
+      g.drawImage(wiseCanvas, ox, 0, S, S);
+      g.restore();
+    }
+  }
   const Y = P.curYears || P.years, yr = Y ? (j > i ? Y[i] + (Y[j] - Y[i]) * e : Y[i]) : args.mid;
   for (const m of P.movers || []) {           // in every wavelength band: grey = archive position, dotted line, red = now
     const p0 = toPx(P, m.ra0, m.dec0, cw, ch), q = moverAt(m, yr), p1 = toPx(P, q[0], q[1], cw, ch);
@@ -808,7 +844,79 @@ function drawSpx() {
   }
 
   const k = Math.round(tpos) % n, ds = P.curDates || P.dates;
-  $("spxCap").textContent = ds[k % ds.length] || "";
+  const tag = procMode === "diff" ? " · Difference" : procMode === "stack" ? " · Temporal Stack" : "";
+  $("spxCap").textContent = (ds[k % ds.length] || "") + tag;
+}
+
+function initProcControls() {
+  const mSub = $("modeSub"), mStk = $("modeStack"), sBtn = $("shareBtn"), dlBtn = $("dlBtn");
+  if (mSub) {
+    mSub.onclick = () => {
+      procMode = procMode === "diff" ? "normal" : "diff";
+      mSub.classList.toggle("on", procMode === "diff");
+      if (mStk) mStk.classList.remove("on");
+      drawSpx();
+    };
+  }
+  if (mStk) {
+    mStk.onclick = () => {
+      procMode = procMode === "stack" ? "normal" : "stack";
+      mStk.classList.toggle("on", procMode === "stack");
+      if (mSub) mSub.classList.remove("on");
+      drawSpx();
+    };
+  }
+  if (dlBtn) {
+    dlBtn.onclick = () => {
+      if (!last_res) return;
+      const spxCv = $("spxCv");
+      const wiseCv = $("wiseCv");
+      const isSplit = app.classList.contains("split");
+      const name = (last_res.name || "field").replace(/[^a-zA-Z0-9_-]/g, "_");
+      
+      const outCanvas = document.createElement("canvas");
+      if (isSplit && wiseCv && wiseCv.width > 0) {
+        outCanvas.width = wiseCv.width + spxCv.width;
+        outCanvas.height = Math.max(wiseCv.height, spxCv.height);
+        const ctx = outCanvas.getContext("2d");
+        ctx.fillStyle = "#0d0f12";
+        ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+        ctx.drawImage(wiseCv, 0, 0);
+        ctx.drawImage(spxCv, wiseCv.width, 0);
+      } else {
+        outCanvas.width = spxCv.width;
+        outCanvas.height = spxCv.height;
+        const ctx = outCanvas.getContext("2d");
+        ctx.drawImage(spxCv, 0, 0);
+      }
+      
+      outCanvas.toBlob(blob => {
+        if (!blob) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `draconid_drift_${name}_${procMode}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toast("Image downloaded");
+      }, "image/png");
+    };
+  }
+  if (sBtn) {
+    sBtn.onclick = () => {
+      if (!last_res) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("ra", Number(last_res.ra).toFixed(4));
+      url.searchParams.set("dec", Number(last_res.dec).toFixed(4));
+      url.searchParams.set("fov", Math.round(last_res.field_deg * 3600));
+      navigator.clipboard?.writeText(url.toString()).then(() => {
+        toast("Direct coordinate link copied to clipboard!");
+      }).catch(() => {
+        toast(`Link: ?ra=${last_res.ra.toFixed(4)}&dec=${last_res.dec.toFixed(4)}`);
+      });
+    };
+  }
 }
 /* before / after: the archive panel sits beside SPHEREx by default; the button hides or shows it */
 app.classList.add("split");
@@ -1476,6 +1584,7 @@ function onArgs() {
     if (init.presets) args.presets = init.presets;
     if (init.mid) args.mid = init.mid;
   } catch (e) {}
+  initProcControls();
   await boot();
   const qp = new URLSearchParams(window.location.search);
   if (qp.has("ra") && qp.has("dec")) {

@@ -89,6 +89,16 @@
       </button>
       <div class="speed" role="group" aria-label="Playback speed">
         <button type="button" data-s="0.5">0.5×</button><button type="button" data-s="1" class="on">1×</button><button type="button" data-s="2">2×</button>
+      </div>
+      <div class="proc-mode" role="group" aria-label="Processing mode">
+        <button id="modeSub" type="button" title="Difference image: Subtract comparison to expose shifting motion">Diff</button>
+        <button id="modeStack" type="button" title="Deep temporal sum across all visits">Stack</button>
+        <button id="dlBtn" type="button" title="Download comparison and SPHEREx frames">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <button id="shareBtn" type="button" title="Share direct link to coordinates">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+        </button>
       </div></section>
     <section class="panel" id="pDepth" aria-label="3D map of this patch of sky: distance and time">
       <canvas id="depthCv"></canvas><div id="depthTags" aria-hidden="true"></div><canvas id="rulerCv" aria-hidden="true"></canvas>

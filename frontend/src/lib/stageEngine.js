@@ -159,37 +159,33 @@ const OTYPE = { "*": "Star", "**": "Double star", "BY*": "Star", "Mi*": "Mira va
 const smoothCv = document.createElement("canvas"); smoothCv.id = "smooth"; inner.appendChild(smoothCv);
 let smoothId = 0;
 async function refreshSmooth() {
-  const my = ++smoothId; smoothCv.classList.remove("on");
-  if (view !== "home" || sky.fov() > 3.5) return;
+  const my = ++smoothId;
+  if (view !== "home" || sky.fov() > 4.5) {
+    smoothCv.classList.remove("on");
+    return;
+  }
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const [r, d] = sky.center(), w = Math.min(1800, Math.round(sky.W * dpr)), h = Math.round(w * sky.H / sky.W);
+  const [r, d] = sky.center(), w = Math.min(2048, Math.round(sky.W * dpr)), h = Math.round(w * sky.H / sky.W);
   try {
-    const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, { gain: 1.08, gamma: 0.96 });
+    const c = await renderCutout(SURVEYS.tmass, r, d, sky.fov(), w, h, { gain: 1.15, gamma: 0.94, black: 0.02 });
     if (my !== smoothId || view !== "home") return;
-    smoothCv.width = w; smoothCv.height = h; smoothCv.getContext("2d").drawImage(c, 0, 0); smoothCv.classList.add("on");
+    smoothCv.width = w; smoothCv.height = h;
+    smoothCv.getContext("2d").drawImage(c, 0, 0);
+    smoothCv.classList.add("on");
   } catch (e) {}
 }
-async function autoCuts() { return;
-  if (sky.fov() > 60) return sky.setBlack(18);
-  const [r, d] = sky.center();
-  try {
-    const c = await renderCutout(SURVEYS.spherex(63), r, d, sky.fov() * 0.8, 24, 16);
-    const px = c.getContext("2d").getImageData(0, 0, 24, 16).data, v = [];
-    for (let i = 0; i < px.length; i += 4) v.push((px[i] + px[i + 1] + px[i + 2]) / 3);
-    v.sort((a, b) => a - b);
-    sky.setBlack(v[v.length >> 1] + 6); sky.black = v[v.length >> 1] + 6;
-  } catch (e) {}
-}
+async function autoCuts() { return; }
 let spinning = false;
 function homeView() { return [0, 0, sky.homeFov()]; }
 function fitBlend() {                              // cover exactly the area outside the all-sky ellipse (measured, not assumed)
+  if (sky.fov() < 60) return;
   const W = sky.W, H = sky.H, edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
     let lo = 0, hi = Math.hypot(W, H);
-    for (let i = 0; i < 22; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
+    for (let i = 0; i < 18; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
     return lo;
   };
   const w = edge(1, 0) - 0.5, h = edge(0, 1) - 0.5;
-  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #000 100%)`;
+  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #08090c 100%)`;
   const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
 }
 async function boot() {
@@ -222,15 +218,52 @@ function bindSky() {
     tipEl.style.transform = `translate(${e.clientX + 18}px,${e.clientY + 20}px)`; tipEl.classList.add("on");
   });
   let wt = 0;
+  let zoomTargetFov = null;
+  let zoomAnimId = null;
+  let anchorX = 0, anchorY = 0;
+
+  function stepZoomLoop() {
+    if (zoomTargetFov === null) { zoomAnimId = null; return; }
+    const curFov = sky.fov();
+    const diff = zoomTargetFov - curFov;
+    if (Math.abs(diff) < 0.0015 * curFov || Math.abs(diff) < 0.0001) {
+      sky.a.setFoV(zoomTargetFov);
+      zoomAnimId = null;
+      zoomTargetFov = null;
+      if (sky.fov() > 60) fitBlend();
+      clearTimeout(wt);
+      wt = setTimeout(() => { refreshSmooth(); }, 120);
+      return;
+    }
+    // Buttery smooth exponential damping for luxurious cinematic zooming
+    const nextFov = curFov + diff * 0.30;
+    const r = rect(), before = sky.pix2world(anchorX - r.left, anchorY - r.top);
+    sky.a.setFoV(nextFov);
+    if (before && nextFov < 60) {
+      const after = sky.pix2world(anchorX - r.left, anchorY - r.top);
+      const c = sky.center();
+      if (after) {
+        sky.a.gotoRaDec(
+          c[0] + (before[0] - after[0]),
+          Math.max(-90, Math.min(90, c[1] + before[1] - after[1]))
+        );
+      }
+    }
+    if (nextFov > 60) fitBlend();
+    zoomAnimId = requestAnimationFrame(stepZoomLoop);
+  }
+
   clip.addEventListener("wheel", e => {
-    if (!homeOk()) return; e.preventDefault(); e.stopPropagation(); leaveLanding(); wake();
-    const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
-    const f = Math.min(sky.homeFov(), Math.max(0.02, sky.fov() * Math.exp(dy * 0.004)));   // ~1.5x per wheel notch
-    const r = rect(), before = sky.pix2world(e.clientX - r.left, e.clientY - r.top);
-    sky.a.setFoV(f); fitBlend();
-    const after = sky.pix2world(e.clientX - r.left, e.clientY - r.top), c = sky.center();
-    if (before && after && f < 60) sky.a.gotoRaDec(c[0] + (before[0] - after[0]), Math.max(-90, Math.min(90, c[1] + before[1] - after[1])));   // zoom toward the cursor
-    clearTimeout(wt); smoothCv.classList.remove("on"); smoothId++; wt = setTimeout(async () => { await autoCuts(); refreshSmooth();  }, 110);
+    if (!homeOk()) return;
+    e.preventDefault(); e.stopPropagation(); leaveLanding(); wake();
+    anchorX = e.clientX; anchorY = e.clientY;
+    const dy = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaY;
+    const curBase = zoomTargetFov !== null ? zoomTargetFov : sky.fov();
+    const factor = Math.exp(dy * 0.0028);
+    zoomTargetFov = Math.min(sky.homeFov(), Math.max(0.015, curBase * factor));
+    if (!zoomAnimId) {
+      zoomAnimId = requestAnimationFrame(stepZoomLoop);
+    }
   }, { capture: true, passive: false });
   clip.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); }, true);
   window.addEventListener("contextmenu", e => { if (clip.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);
@@ -449,7 +482,7 @@ async function flyTo(ra, dec, fov, dur, label = "") {
     sky.set(r, d, curFov);
     
     updateLockAndWarp(ra, dec, t, label);
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.70) / 0.30)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.45) / 0.55)));
   });
   sky.set(ra, dec, fov);
   updateLockAndWarp(ra, dec, 1, label);
@@ -515,7 +548,7 @@ async function go(item) {
   // 1) HiDPI 2MASS map of the whole window, razor-sharp, to take over from Aladin's pixels as the zoom lands
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const cw = Math.min(2400, Math.round(sky.W * dpr)), ch = Math.round(cw * sky.H / sky.W);
-  renderCutout(SURVEYS.tmass8, req.pos[0], req.pos[1], ENDFOV(), cw, ch, { gain: 1.16, gamma: 0.92, black: 0.02 }).then(c => {
+  renderCutout(SURVEYS.tmass, req.pos[0], req.pos[1], ENDFOV(), cw, ch, { gain: 1.18, gamma: 0.92, black: 0.02 }).then(c => {
     if (!req || req.nonce !== my) return;
     skyCanvas = c; overlay.width = c.width; overlay.height = c.height; overlay.getContext("2d").drawImage(c, 0, 0);
     app.classList.add("smoothready"); if (req.arrived) overlay.style.opacity = "1";

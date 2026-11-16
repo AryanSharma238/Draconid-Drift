@@ -178,15 +178,18 @@ async function autoCuts() { return; }
 let spinning = false;
 function homeView() { return [0, 0, sky.homeFov()]; }
 function fitBlend() {                              // cover exactly the area outside the all-sky ellipse (measured, not assumed)
-  if (sky.fov() < 60) return;
-  const W = sky.W, H = sky.H, edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
+  if (!sky || sky.fov() < 60) return;
+  const W = sky.W, H = sky.H;
+  if (!W || !H) return;
+  const edge = (dx, dy) => {   // distance from the centre to the map's edge along (dx, dy)
     let lo = 0, hi = Math.hypot(W, H);
     for (let i = 0; i < 18; i++) { const m = (lo + hi) / 2; sky.pix2world(W / 2 + dx * m, H / 2 + dy * m) ? (lo = m) : (hi = m); }
     return lo;
   };
   const w = edge(1, 0) - 0.5, h = edge(0, 1) - 0.5;
-  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #08090c 100%)`;
-  const b = $("blend"); b.style.webkitMaskImage = b.style.maskImage = m;
+  if (w <= 30 || h <= 30 || !isFinite(w) || !isFinite(h)) return;
+  const m = `radial-gradient(ellipse ${w}px ${h}px at 50% 50%, transparent calc(100% - 1.5px), #0d0f13 100%)`;
+  const b = $("blend"); if (b) b.style.webkitMaskImage = b.style.maskImage = m;
 }
 async function boot() {
   loadCatalog();
@@ -379,7 +382,7 @@ function bindSky() {
 /* ---------------------------------------------------------------- flight */
 const panelA = () => { const r = $("pSpx").getBoundingClientRect(); return r.width ? r.height / r.width : 1.4; };
 // width of the field on screen at the end of the flight; the panel window (width x width*a) must fit inside the viewport
-const ENDFOV = () => req.fieldDeg * sky.W / (SF() * panelA());   // sky width so the field spans the panel's height
+const ENDFOV = () => Math.max(1.8, Math.min(3.2, req.fieldDeg * sky.W / (SF() * panelA()) * 5.0));   // comfortable stellar field settling on the star
 const SF = () => Math.min(sky.W * 0.4, 0.8 * (sky.H - 20) / panelA());
 let nonce = 0;
 
@@ -474,11 +477,13 @@ async function flyTo(ra, dec, fov, dur, label = "") {
   const qsmooth = t => t * t * t * (t * (t * 6 - 15) + 10);
   
   await tween(dur, t => {
-    const p = qsmooth(t);
+    // Decoupled pan and zoom: pan tracks smoothly while zoom glides at a gentle, lighter pace in first second
+    const p_pan = t * t * (3 - 2 * t);
+    const p_zoom = t < 0.5 ? 2 * Math.pow(t, 2.6) : 1 - Math.pow(2 - 2 * t, 2.6) / 2;
     // Smooth spherical slerp camera pan directly toward target
-    const [r, d] = radec(slerp(u0, u1, p));
-    // Smooth logarithmic FOV zoom
-    const curFov = Math.exp(lnF0 + (lnF1 - lnF0) * p);
+    const [r, d] = radec(slerp(u0, u1, p_pan));
+    // Gentle progressive zoom settling softly at the star
+    const curFov = Math.exp(lnF0 + (lnF1 - lnF0) * p_zoom);
     sky.set(r, d, curFov);
     
     updateLockAndWarp(ra, dec, t, label);
@@ -783,8 +788,11 @@ function drawSpectrum() {
   g += `<path d="${top}${bot}Z" class="err"/>`;
   g += `<path d="${sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[1]).toFixed(1)}`).join("")}" class="line"/>`;
   for (const f of sp.features) g += `<line x1="${x(f.wl)}" x2="${x(f.wl)}" y1="${T}" y2="${H - B}" class="ft"/><text x="${x(f.wl)}" y="${T - 3}" class="ftl">${f.label}</text>`;
-  const note = sp.features.length ? "" : `<p class="specnote">No strong absorption features</p>`;
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${note}${sp.wings ? `<p class="specnote">Saturated core: shape measured in the star's wings</p>` : ""}`;
+  const notes = [];
+  if (sp.wings) notes.push("Saturated core: shape measured in the star's wings");
+  else if (!sp.features.length) notes.push("No strong absorption features");
+  const noteHtml = notes.map(t => `<p class="specnote">${t}</p>`).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${noteHtml}`;
 }
 
 /* ---------------------------------------------------------------- wavelength bar (bottom) */
@@ -1178,7 +1186,9 @@ const CORE_PRESETS = [
   { group: "Notable Sky Targets", key: "custom", name: "Vega", ra: 279.234735, dec: 38.783689, pmra: 200.94, pmdec: 286.23, epoch: 2000, kind: "Standard photometric calibrator star", fov: 350 },
   { group: "Notable Sky Targets", key: "custom", name: "Pleiades", ra: 56.75, dec: 24.116667, pmra: 0, pmdec: 0, epoch: 2000, kind: "Seven Sisters open star cluster (M45)", fov: 1200 },
   { group: "Notable Sky Targets", key: "custom", name: "Polaris", ra: 37.954561, dec: 89.264109, pmra: 44.48, pmdec: -11.85, epoch: 2000, kind: "North celestial pole star", fov: 400 },
-  { group: "Notable Sky Targets", key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 }
+  { group: "Notable Sky Targets", key: "custom", name: "Andromeda Galaxy", ra: 10.684708, dec: 41.268750, pmra: 0, pmdec: 0, epoch: 2000, kind: "Nearest major spiral galaxy (M31)", fov: 1800, size: 190 },
+  { group: "Notable Sky Targets", key: "custom", name: "Orion Nebula", ra: 83.822083, dec: -5.391111, pmra: 0, pmdec: 0, epoch: 2000, kind: "Brightest diffuse star-forming nebula (M42)", fov: 800, size: 66 },
+  { group: "Notable Sky Targets", key: "custom", name: "Sagittarius A*", ra: 266.416837, dec: -29.007810, pmra: 0, pmdec: 0, epoch: 2000, kind: "Supermassive black hole at Galactic centre", fov: 400 }
 ];
 
 const sEl = $("search"), qEl = $("q"), listEl = $("results"), sbtn = $("sbtn");
@@ -1187,15 +1197,16 @@ const thumbCache = new Map(), thumbQ = [];
 let thumbBusy = false;
 function openSearch() {
   leaveLanding();
-  if (view !== "home" && view !== "view") return;
   loadCatalog(); closeAbout(); sEl.classList.add("open"); app.classList.add("searching"); sbtn.setAttribute("aria-expanded", "true");
-  tipEl.classList.remove("on"); showItems(presetItems()); setTimeout(() => qEl.focus(), 120);
+  tipEl.classList.remove("on"); showItems(qEl.value.trim() ? filterItems(qEl.value.trim()) : presetItems()); setTimeout(() => qEl.focus(), 60);
 }
 function closeSearch(quick) {
   sEl.classList.remove("open"); app.classList.remove("searching"); sbtn.setAttribute("aria-expanded", "false"); qEl.blur();
   if (!quick) setTimeout(() => { if (!sEl.classList.contains("open")) qEl.value = ""; }, 400);
 }
 sbtn.onclick = () => (sEl.classList.contains("open") ? closeSearch() : openSearch());
+qEl.addEventListener("focus", () => { if (!sEl.classList.contains("open")) openSearch(); });
+qEl.addEventListener("click", () => { if (!sEl.classList.contains("open")) openSearch(); });
 $("veil").onclick = () => closeSearch();
 const presetItems = () => {
   if (args.presets && args.presets.length) {
@@ -1214,6 +1225,25 @@ const presetItems = () => {
 
 function showItems(list) {
   items = list || []; sel = -1; listEl.innerHTML = "";
+  if (!qEl.value.trim()) {
+    const rRow = document.createElement("li");
+    rRow.className = "random-pick-row";
+    rRow.innerHTML = `<button type="button" class="random-pick-btn">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+      </svg>
+      Pick a Random Star
+    </button>`;
+    const btn = rRow.querySelector("button");
+    btn.onclick = e => {
+      e.stopPropagation();
+      closeSearch();
+      const pool = presetItems();
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      if (pick) choose(pick);
+    };
+    listEl.appendChild(rRow);
+  }
   if (!items.length) {
     const li = document.createElement("li");
     li.className = "no-results";
@@ -1265,10 +1295,7 @@ async function pump() {
   thumbBusy = false;
 }
 
-let deb = 0;
-qEl.addEventListener("input", () => {
-  clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
-  if (!q) return showItems(presetItems());
+function filterItems(q) {
   const qLower = q.toLowerCase();
   const all = presetItems();
   const local = all.filter(p =>
@@ -1276,8 +1303,17 @@ qEl.addEventListener("input", () => {
     (p.kind && p.kind.toLowerCase().includes(qLower)) ||
     (p.key && p.key.toLowerCase().includes(qLower))
   ).concat(famous(q));
-  const num = parseCoords(q); const first = num ? [num] : local;
+  const num = parseCoords(q);
+  return num ? [num] : local;
+}
+
+let deb = 0;
+qEl.addEventListener("input", () => {
+  clearTimeout(deb); const q = qEl.value.trim(), my = ++qid;
+  if (!q) return showItems(presetItems());
+  const first = filterItems(q);
   showItems(first);
+  const num = parseCoords(q);
   if (!num && q.length >= 2) deb = setTimeout(() => remote(q, my, first), 260);
 });
 qEl.addEventListener("keydown", e => {

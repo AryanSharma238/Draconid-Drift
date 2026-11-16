@@ -1,14 +1,9 @@
-/* Proxima Nova (licensed: Adobe Fonts or Mark Simonson Studio). Put the .woff2 files in web/stage/fonts/;
-   without them the site uses Montserrat, the closest free match. */
-@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
-@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Semibold.woff2") format("woff2");font-weight:600;font-display:swap}
-@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Bold.woff2") format("woff2");font-weight:700;font-display:swap}
-@font-face{font-family:"Proxima Nova";src:url("fonts/ProximaNova-Extrabold.woff2") format("woff2");font-weight:800;font-display:swap}
+/* Montserrat (Google Fonts) as primary display and UI font */
 :root{
-  --bg:#13161A; --bg2:#1a1e23; --line:rgba(255,255,255,.09); --ink:#e9edf2; --dim:#8b949e;
+  --bg:#0d0f13; --bg2:#16191f; --line:rgba(255,255,255,.09); --ink:#e9edf2; --dim:#8b949e;
   --wine:#7A4A51; --wine-hi:#a86a73; --good:#74c69d; --warn:#e3b04b; --bad:#e07a7a; --info:#7aa7e0;
   --r:26px; --bar:90px;
-  font-family:"Proxima Nova","Montserrat",system-ui,sans-serif;--display:"Proxima Nova","Montserrat",system-ui,sans-serif;
+  font-family:"Montserrat",system-ui,-apple-system,sans-serif;--display:"Montserrat",system-ui,-apple-system,sans-serif;
 }
 *{box-sizing:border-box;margin:0}
 html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased}
@@ -17,24 +12,17 @@ button:focus-visible,input:focus-visible,#track:focus-visible{outline:2px solid 
 #app{position:fixed;inset:0;overflow:hidden}
 
 /* ---------- the sky ---------- */
-#sky-clip{position:absolute;inset:0;overflow:hidden;clip-path:inset(0 0 0 0 round 0px);will-change:clip-path,transform;backface-visibility:hidden;-webkit-backface-visibility:hidden;contain:paint}
+#sky-clip{position:absolute;inset:0;overflow:hidden;clip-path:inset(0 0 0 0 round 0px);will-change:clip-path,transform;backface-visibility:hidden;-webkit-backface-visibility:hidden}
 #sky-inner{position:absolute;inset:0;transform-origin:50% 50%;will-change:transform;backface-visibility:hidden;-webkit-backface-visibility:hidden}
-#sky{position:absolute;inset:0;background:#08090c}
+#sky{position:absolute;inset:0;background:#0d0f13}
 #sky .aladin-logo-container,.aladin-logo-container{display:none!important}
-#sky canvas{
-  outline:none!important;
-  border:none!important;
-  image-rendering:-webkit-optimize-contrast;
-  image-rendering:auto;
-  filter:contrast(1.16) brightness(1.06) saturate(1.12);
-  transform:translateZ(0);
-}
+#sky canvas{outline:none!important;border:none!important}
 #smooth, #fw{
-  filter:contrast(1.14) brightness(1.04) saturate(1.08);
+  filter:contrast(1.08) brightness(1.02);
   transform:translateZ(0);
 }
-/* Aladin paints its outside-the-map colour as (26,26,26). Multiplying by (186,216,255) lands exactly on the page colour. */
-#blend{position:absolute;inset:0;background:#08090c;pointer-events:none;transition:opacity .5s}
+/* Aladin paints its outside-the-map colour as (26,26,26). Multiplying lands on the page colour. */
+#blend{position:absolute;inset:0;background:#0d0f13;pointer-events:none;transition:opacity .5s}
 #app:not([data-view=home]) #blend{opacity:0}
 
 /* ---------- top bar ---------- */
@@ -57,18 +45,22 @@ nav{display:flex;align-items:center;gap:6px}
 #sbtn .x1,#sbtn .x2{opacity:0;transform:scale(.4)}
 #search.open #sbtn .lens,#search.open #sbtn .handle{opacity:0;transform:scale(.4) rotate(40deg)}
 #search.open #sbtn .x1,#search.open #sbtn .x2{opacity:1;transform:none}
-#results{position:absolute;right:-4px;top:58px;width:min(92vw,470px);list-style:none;padding:8px;background:rgba(26,30,35,.94);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:20px;opacity:0;transform:translateY(-6px);pointer-events:none;transition:opacity .25s,transform .35s cubic-bezier(.3,.8,.2,1);max-height:calc(100vh - 110px);overflow:auto}
+#results{position:absolute;right:-4px;top:58px;width:min(92vw,470px);list-style:none;padding:10px;background:rgba(22,25,30,.96);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.14);border-radius:20px;box-shadow:0 18px 48px rgba(0,0,0,.65);opacity:0;transform:translateY(-6px);pointer-events:none;transition:opacity .25s,transform .35s cubic-bezier(.3,.8,.2,1);max-height:calc(100vh - 110px);overflow-y:auto;overflow-x:hidden;z-index:100;scrollbar-width:thin;scrollbar-color:rgba(122,74,81,0.5) transparent}
 #search.open #results{opacity:1;transform:none;pointer-events:auto}
-#results li{display:flex;align-items:center;gap:14px;padding:8px 10px;border-radius:14px;cursor:pointer}
-#results li:hover,#results li.on{background:rgba(255,255,255,.07)}
-#results .th{width:46px;height:46px;border-radius:12px;background:#0b0d10;flex:none;overflow:hidden}
+#results .random-pick-row{padding:2px 2px 8px;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,.08);cursor:default}
+#results .random-pick-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 18px;background:linear-gradient(135deg,rgba(122,74,81,.6),rgba(141,87,96,.45));border:1px solid rgba(255,255,255,.2);border-radius:14px;color:#fff;font-family:inherit;font-size:14.5px;font-weight:600;letter-spacing:.01em;cursor:pointer;transition:background .2s,border-color .2s,transform .15s}
+#results .random-pick-btn:hover{background:linear-gradient(135deg,rgba(141,87,96,.8),rgba(165,103,114,.65));border-color:rgba(255,255,255,.35);transform:translateY(-1px)}
+#results .random-pick-btn svg{flex:none;stroke:#f3c880}
+#results li[role=option]{display:flex;align-items:center;gap:14px;padding:8px 10px;border-radius:14px;cursor:pointer;transition:background .15s}
+#results li[role=option]:hover,#results li[role=option].on{background:rgba(255,255,255,.08)}
+#results .th{width:46px;height:46px;border-radius:12px;background:#0b0d10;flex:none;overflow:hidden;border:1px solid rgba(255,255,255,.06)}
 #results .th canvas{width:100%;height:100%;display:block;opacity:0;transition:opacity .4s}
 #results .th canvas.ok{opacity:1}
-#results .nm{font-size:16px}
-#results .kd{font-size:13px;color:var(--dim);margin-top:2px}
-#results .hdr{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#e8be8c;padding:8px 10px 4px;margin-top:4px;cursor:default;user-select:none}
-#results .hdr:first-child{margin-top:0}
-#results .no-results{font-size:13px;color:var(--dim);padding:14px 10px;text-align:center;cursor:default}
+#results .nm{font-size:15.5px;font-weight:600;color:#fff}
+#results .kd{font-size:12.5px;color:var(--dim);margin-top:2px;line-height:1.25}
+#results .hdr{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f3c880;padding:10px 10px 4px;margin-top:6px;cursor:default;user-select:none;border-top:1px solid rgba(255,255,255,.06)}
+#results .hdr:first-child{margin-top:0;border-top:none}
+#results .no-results{font-size:13.5px;color:var(--dim);padding:20px 14px;text-align:center;line-height:1.45;cursor:default}
 #veil{position:absolute;inset:0;background:rgba(10,12,15,.74);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .4s;z-index:20}
 #app.searching #veil{opacity:1;pointer-events:auto}
 
@@ -280,7 +272,7 @@ body{font-size:15px}
 #app.shown #pSpx .speed{opacity:1;transition:opacity .5s .3s}
 
 /* ---- info panel */
-#info{gap:16px;justify-content:flex-start;padding:24px 26px;overflow:hidden}
+#info{gap:16px;justify-content:flex-start;padding:24px 26px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(122,74,81,0.5) transparent}
 #info .head .big{font-size:clamp(26px,2.4vw,38px);line-height:1.05;margin:0}
 #info .kind{margin-top:6px;color:var(--dim);font-size:15px}
 #info .facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
@@ -326,9 +318,9 @@ body{font-size:15px}
 @media (max-width:820px){#page2 .panel.img{aspect-ratio:1/1.1;height:auto}#app:not(.split) #pSpx{grid-column:auto}}
 
 #waveKnob{display:none}
-#info .spec{height:140px;position:relative}
-#info .spec .specnote{position:absolute;left:0;bottom:0}
-#info .spec svg{height:118px}
+#info .spec{height:auto;min-height:110px;position:relative;display:flex;flex-direction:column}
+#info .spec svg{width:100%;height:110px;flex:none;display:block}
+#info .spec .specnote{position:static;margin-top:6px;font-size:12px;line-height:1.35;color:var(--dim)}
 
 #land{gap:0}
 #land h1{font-size:clamp(40px,6.2vw,92px);font-weight:800;letter-spacing:-.025em;line-height:1.02;max-width:14ch}

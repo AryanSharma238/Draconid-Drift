@@ -295,17 +295,63 @@ function bindSky() {
     });
   };
 
+  function findBrightestPixel(bx, by, bw, bh) {
+    const canvases = [smoothCv, ...skyEl.querySelectorAll("canvas")];
+    for (const cv of canvases) {
+      if (!cv || !cv.width || !cv.height) continue;
+      try {
+        const ctx = cv.getContext("2d", { willReadFrequently: true });
+        if (ctx) {
+          const rect = cv.getBoundingClientRect();
+          const r0 = clip.getBoundingClientRect();
+          const scaleX = cv.width / (rect.width || cv.clientWidth || 1);
+          const scaleY = cv.height / (rect.height || cv.clientHeight || 1);
+          const sx = Math.max(0, Math.floor((bx - (rect.left - r0.left)) * scaleX));
+          const sy = Math.max(0, Math.floor((by - (rect.top - r0.top)) * scaleY));
+          const sw = Math.min(cv.width - sx, Math.floor(bw * scaleX));
+          const sh = Math.min(cv.height - sy, Math.floor(bh * scaleY));
+          if (sw > 3 && sh > 3) {
+            const img = ctx.getImageData(sx, sy, sw, sh).data;
+            let maxL = 0, bestX = -1, bestY = -1;
+            for (let j = 0; j < sh; j += 2) {
+              for (let i = 0; i < sw; i += 2) {
+                const idx = (j * sw + i) * 4;
+                const lum = img[idx] * 0.299 + img[idx + 1] * 0.587 + img[idx + 2] * 0.114;
+                if (lum > maxL) { maxL = lum; bestX = i; bestY = j; }
+              }
+            }
+            if (maxL > 35 && bestX >= 0) {
+              return {
+                screenX: bx + bestX / scaleX,
+                screenY: by + bestY / scaleY,
+                lum: maxL
+              };
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
   window.addEventListener("pointermove", e => {
     if (!sel) return; stop(e);
     const r = rect();
     const currX = e.clientX - r.left, currY = e.clientY - r.top;
     
-    // Space-limited: bounds the rectangle so it stays focused on a celestial patch
-    const maxBox = Math.min(Math.min(sky.W, sky.H) * 0.45, 240);
+    // Degrees per pixel across the sky viewport
+    const degPerPx = (sky.fov && sky.W) ? (sky.fov() / sky.W) : 0.05;
+    // Clamped so the rectangle cannot exceed 2.5 degrees on the sky,
+    // but when zoomed in, it can expand comfortably across up to 92% of the screen.
+    const MAX_ANGULAR_DEG = 2.5;
+    const maxPxFromAngle = MAX_ANGULAR_DEG / Math.max(0.000001, degPerPx);
+    const maxBoxW = Math.max(24, Math.min(sky.W * 0.92, maxPxFromAngle));
+    const maxBoxH = Math.max(24, Math.min(sky.H * 0.92, maxPxFromAngle));
+
     const rawW = Math.abs(currX - sel.x0);
     const rawH = Math.abs(currY - sel.y0);
-    const w = Math.max(8, Math.min(maxBox, rawW));
-    const h = Math.max(8, Math.min(maxBox, rawH));
+    const w = Math.max(8, Math.min(maxBoxW, rawW));
+    const h = Math.max(8, Math.min(maxBoxH, rawH));
     
     const x = currX >= sel.x0 ? sel.x0 : sel.x0 - w;
     const y = currY >= sel.y0 ? sel.y0 : sel.y0 - h;
@@ -340,24 +386,49 @@ function bindSky() {
     let starFound = false;
     let targetName = `${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
 
-    const degRadius = Math.max(side / 7200, 0.015);
+    const degRadius = Math.max(side / 7200, 0.02);
     
-    // Check known catalog objects within the rectangular region synchronously (0ms)
+    // Check known catalog objects within the rectangular region:
+    // Pick the brightest / most prominent object covered by the rectangle!
     const allPresets = presetItems();
     const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
-    let bestObj = null, bestDist = degRadius;
+    const candidates = [];
+
     for (const obj of [...allPresets, ...catList]) {
       const d = sepDeg([obj.ra, obj.dec], c);
-      if (d < bestDist) {
-        bestDist = d;
-        bestObj = obj;
+      if (d <= degRadius * 1.35) {
+        const pt = sky.world2pix(obj.ra, obj.dec);
+        if (pt && pt[0] >= x - 8 && pt[0] <= x + w + 8 && pt[1] >= y - 8 && pt[1] <= y + h + 8) {
+          // Inside rectangle: score by astronomical prominence / brightness (citations, preset, size) & centrality
+          const isPreset = obj.key && obj.key !== "custom";
+          const citations = obj.nb || 0;
+          const angularSize = obj.size || 0;
+          const distRatio = Math.max(0, 1 - d / degRadius);
+          const score = (isPreset ? 1000000 : 0) + (citations * 15) + (angularSize * 8) + (distRatio * 50);
+          candidates.push({ obj, score, pt, d });
+        }
       }
     }
-    if (bestObj) {
-      targetRa = bestObj.ra;
-      targetDec = bestObj.dec;
-      targetName = bestObj.name;
+
+    if (candidates.length) {
+      candidates.sort((a, b) => b.score - a.score);
+      const best = candidates[0].obj;
+      targetRa = best.ra;
+      targetDec = best.dec;
+      targetName = best.name;
       starFound = true;
+    } else {
+      // If not in catalog, search optical pixels within rectangle to lock onto the brightest star
+      const brightPixel = findBrightestPixel(x, y, w, h);
+      if (brightPixel) {
+        const starCoord = sky.pix2world(brightPixel.screenX, brightPixel.screenY);
+        if (starCoord && Number.isFinite(starCoord[0]) && Number.isFinite(starCoord[1])) {
+          targetRa = starCoord[0];
+          targetDec = starCoord[1];
+          targetName = `Star (${starCoord[0].toFixed(2)}°, ${starCoord[1] >= 0 ? "+" : ""}${starCoord[1].toFixed(2)}°)`;
+          starFound = true;
+        }
+      }
     }
 
     // Match the selection rectangle towards the exact center of the star it identifies
@@ -369,7 +440,7 @@ function bindSky() {
         selEl.style.top = `${Math.round(starPix[1] - h / 2)}px`;
       }
     }
-    // If no star, it points to the exact middle of the rectangle (c[0], c[1])
+    // If no star found, it points to the exact middle of the rectangle (c[0], c[1])
 
     selEl.classList.add("fading");
     setTimeout(() => { selEl.classList.remove("on", "snapping", "fading"); }, 500);

@@ -504,6 +504,7 @@ function makeOverlay() {
 }
 
 async function go(item) {
+  leaveLanding();
   if (busy && view !== "view") return;
   if (app.classList.contains("deep")) exitDepth();
   closeSearch(true); closeAbout();

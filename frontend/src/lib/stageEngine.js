@@ -264,10 +264,9 @@ function bindSky() {
     const currX = e.clientX - r.left, currY = e.clientY - r.top;
     const dx = currX - sel.x0, dy = currY - sel.y0;
     const sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
+    // Sensitive direct tracking: matches drag displacement naturally
     const rawDist = Math.max(Math.abs(dx), Math.abs(dy));
-    // Insensitive smooth stretching: dampened with exponent 0.90
-    const effectiveD = rawDist < 6 ? rawDist * 0.5 : 8 + Math.pow(Math.max(0, rawDist - 6), 0.90) * 1.15;
-    const D = Math.max(16, Math.min(Math.min(sky.W, sky.H) * 0.9, effectiveD));
+    const D = Math.max(16, Math.min(Math.min(sky.W, sky.H) * 0.9, rawDist * 1.15));
     const xLeft = sx > 0 ? sel.x0 : sel.x0 - D;
     const yTop = sy > 0 ? sel.y0 : sel.y0 - D;
     sel.cx = xLeft + D / 2;
@@ -291,53 +290,81 @@ function bindSky() {
     // Diameter of selected circular region on the sky in arcseconds
     const side = sepDeg(topPt, botPt) * 3600;
     if (side > 7200) { selEl.classList.remove("on"); return toast(`That circle is ${(side / 3600).toFixed(side > 36000 ? 0 : 1)}° across. Scroll to zoom in and pick up to 2°.`); }
-    
-    // Smooth transition into the background
-    selEl.classList.add("fading");
-    setTimeout(() => {
-      selEl.classList.remove("on", "fading");
-    }, 850);
 
-    // Auto-snap to the brightest star / object within the circle by sampling HiPS pixels
+    // Default target: exact middle of the circle
     let targetRa = c[0], targetDec = c[1];
-    const raStr = `${c[0].toFixed(2)}°`;
-    const decStr = `${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°`;
-    let targetName = `Selected Region (${raStr}, ${decStr})`;
-    try {
-      const sw = 48, sh = 48;
-      const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
-      const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
-      let maxB = 0, bestX = sw / 2, bestY = sh / 2;
-      for (let py = 0; py < sh; py++) {
-        for (let px = 0; px < sw; px++) {
-          // Check circular mask within the square cutout
-          const ndx = px - sw / 2, ndy = py - sh / 2;
-          if (Math.hypot(ndx, ndy) > sw / 2) continue;
-          const idx = (py * sw + px) * 4;
-          const b = data[idx] + data[idx + 1] + data[idx + 2];
-          if (b > maxB) { maxB = b; bestX = px; bestY = py; }
-        }
-      }
-      if (maxB > 60) {
-        const fracX = (bestX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (bestY + 0.5)) / sh;
-        const degW = side / 3600;
-        const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
-        targetRa = ((c[0] + dRa) % 360 + 360) % 360;
-        targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
-        targetName = `Selected Target (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
-      }
-    } catch (e) {
-      const boxRadiusDeg = Math.max(side / 7200, 0.08);
-      const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
-      if (catList && catList.length) {
-        let best = null, bestDist = boxRadiusDeg;
-        for (const obj of catList) {
-          const d = sepDeg([obj.ra, obj.dec], c);
-          if (d < bestDist) { bestDist = d; best = obj; }
-        }
-        if (best) { targetRa = best.ra; targetDec = best.dec; targetName = best.name; }
+    let starFound = false;
+    let targetName = `Selected Region (${c[0].toFixed(2)}°, ${c[1] >= 0 ? "+" : ""}${c[1].toFixed(2)}°)`;
+
+    const degRadius = Math.max(side / 7200, 0.005);
+    
+    // 1) First check known catalog objects within the circular region
+    const allPresets = presetItems();
+    const catList = (CATALOG && CATALOG.length) ? CATALOG : FAMOUS;
+    let bestObj = null, bestDist = degRadius;
+    for (const obj of [...allPresets, ...catList]) {
+      const d = sepDeg([obj.ra, obj.dec], c);
+      if (d < bestDist) {
+        bestDist = d;
+        bestObj = obj;
       }
     }
+    if (bestObj) {
+      targetRa = bestObj.ra;
+      targetDec = bestObj.dec;
+      targetName = bestObj.name;
+      starFound = true;
+    }
+
+    // 2) If not in catalog, sample the 2MASS cutout to find the brightest star/source inside the circle
+    if (!starFound) {
+      try {
+        const sw = 48, sh = 48;
+        const cutout = await renderCutout(SURVEYS.tmass, c[0], c[1], side / 3600, sw, sh, {});
+        const data = cutout.getContext("2d").getImageData(0, 0, sw, sh).data;
+        let maxB = 0, bestX = sw / 2, bestY = sh / 2;
+        let totalFlux = 0, fluxX = 0, fluxY = 0;
+        for (let py = 0; py < sh; py++) {
+          for (let px = 0; px < sw; px++) {
+            const ndx = px - sw / 2, ndy = py - sh / 2;
+            if (Math.hypot(ndx, ndy) > sw / 2) continue;
+            const idx = (py * sw + px) * 4;
+            const b = data[idx] + data[idx + 1] + data[idx + 2];
+            if (b > maxB) { maxB = b; bestX = px; bestY = py; }
+            if (b > 50) { totalFlux += b; fluxX += px * b; fluxY += py * b; }
+          }
+        }
+        if (maxB > 65) {
+          const cX = totalFlux > 0 ? fluxX / totalFlux : bestX;
+          const cY = totalFlux > 0 ? fluxY / totalFlux : bestY;
+          const fracX = (cX + 0.5 - sw / 2) / sw, fracY = (sh / 2 - (cY + 0.5)) / sh;
+          const degW = side / 3600;
+          const dRa = -fracX * degW / Math.cos(c[1] * Math.PI / 180), dDec = fracY * degW;
+          targetRa = ((c[0] + dRa) % 360 + 360) % 360;
+          targetDec = Math.max(-90, Math.min(90, c[1] + dDec));
+          targetName = `Selected Target (${targetRa.toFixed(2)}°, ${targetDec >= 0 ? "+" : ""}${targetDec.toFixed(2)}°)`;
+          starFound = true;
+        }
+      } catch (e) {}
+    }
+
+    // 3) Match the selection circle towards the exact center of the identified star!
+    if (starFound) {
+      const starPix = sky.world2pix(targetRa, targetDec);
+      if (starPix && Number.isFinite(starPix[0]) && Number.isFinite(starPix[1])) {
+        selEl.classList.add("snapping");
+        selEl.style.left = `${Math.round(starPix[0])}px`;
+        selEl.style.top = `${Math.round(starPix[1])}px`;
+      }
+    }
+    // If no star, it points to the exact middle of the circle (c[0], c[1])
+
+    setTimeout(() => {
+      selEl.classList.remove("snapping");
+      selEl.classList.add("fading");
+      setTimeout(() => { selEl.classList.remove("on", "fading"); }, 850);
+    }, starFound ? 300 : 100);
+
     go({ key: "custom", name: targetName, ra: targetRa, dec: targetDec, pmra: 0, pmdec: 0, epoch: args.mid, fov: Math.max(60, side) });
   }, true);
 }
@@ -439,36 +466,23 @@ function clearLockAndWarp() {
 }
 
 async function flyTo(ra, dec, fov, dur, label = "") {
-  const T = [ra, dec], c0 = sky.center(), f0 = sky.fov(), aspect = sky.H / sky.W;
-  const start = offsetOf(c0, T), startFrac = [start[0] / f0, start[1] / f0];
-  const visible = Math.abs(startFrac[0]) < 0.42 && Math.abs(startFrac[1]) < 0.42 * aspect && f0 < 200;
-  const fA0 = visible ? f0 : Math.max(fov, Math.min(f0 * 0.55, 90));
-  const kA = visible ? startFrac : OFF;
-  // Give camera plenty of time (42% of 3.0s = ~1.26s) to smoothly pan and center onto the celestial object
-  const tA = visible ? 0.25 : 0.45;
-  const fPeak = Math.min(sky.homeFov(), Math.max(f0, fA0, Math.hypot(...offsetOf(c0, T)) * 1.7));
-  const fA = visible ? f0 : Math.max(fA0, Math.sqrt(fPeak * fov));
-  const u0 = unit(c0[0], c0[1]), cA = centreFor(T, [kA[0] * fA, kA[1] * fA]), uA = unit(cA[0], cA[1]);
-
+  const c0 = sky.center(), u0 = unit(c0[0], c0[1]), u1 = unit(ra, dec);
+  const f0 = sky.fov();
+  const lnF0 = Math.log(f0), lnF1 = Math.log(fov);
+  
+  // Quintic smootherstep for seamless, cinematic camera pan (continuous velocity and acceleration, zero jerk)
+  const qsmooth = t => t * t * t * (t * (t * 6 - 15) + 10);
+  
   await tween(dur, t => {
-    if (t < tA) {
-      // Phase 1: Camera pan and sphere rotation to orient towards target
-      const q = t / tA, ss = x => x * x * x * (x * (x * 6 - 15) + 10);
-      const p = ss(clamp01((q - 0.05) / 0.95)), c = radec(slerp(u0, uA, p));
-      const out = ss(clamp01(q / 0.4));
-      const fOut = Math.exp(Math.log(f0) + (Math.log(fPeak) - Math.log(f0)) * out);
-      const back = Math.exp(Math.log(fPeak) + (Math.log(fA) - Math.log(fPeak)) * ss(clamp01((q - 0.4) / 0.6)));
-      const f = q < 0.4 ? fOut : Math.max(back, Math.hypot(...offsetOf(c, T)) * 3.4);
-      sky.set(c[0], c[1], Math.min(f, sky.homeFov()));
-    } else {
-      // Phase 2: Steady dive & zoom onto the identified star
-      const u = clamp01((t - tA) / (1 - tA)), z = smooth(u), k = 1 - smooth(Math.min(1, u * 1.08));
-      const f = Math.exp(Math.log(fA) + (Math.log(fov) - Math.log(fA)) * z);
-      const c = centreFor(T, [kA[0] * k * f, kA[1] * k * f]);
-      sky.set(c[0], c[1], f);
-    }
+    const p = qsmooth(t);
+    // Smooth spherical slerp camera pan directly toward target
+    const [r, d] = radec(slerp(u0, u1, p));
+    // Smooth logarithmic FOV zoom
+    const curFov = Math.exp(lnF0 + (lnF1 - lnF0) * p);
+    sky.set(r, d, curFov);
+    
     updateLockAndWarp(ra, dec, t, label);
-    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.85) / 0.15)));
+    if (overlay) overlay.style.opacity = String(smooth(clamp01((t - 0.70) / 0.30)));
   });
   sky.set(ra, dec, fov);
   updateLockAndWarp(ra, dec, 1, label);

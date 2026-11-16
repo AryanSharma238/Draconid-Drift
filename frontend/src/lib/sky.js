@@ -51,6 +51,7 @@ export class Sky {
   setBlack(v) {}
   grid(on) { try { on ? this.a.showCooGrid() : this.a.hideCooGrid(); } catch (e) {} }
   pix2world(x, y) { try { const r = this.a.pix2world(x, y); return r && isFinite(r[0]) ? [r[0], r[1]] : null; } catch (e) { return null; } }
+  world2pix(ra, dec) { try { const p = this.a.world2pix(ra, dec); return p && isFinite(p[0]) ? [p[0], p[1]] : null; } catch (e) { return null; } }
   /** FoV (deg across the viewport width) that shows the whole AIT ellipse inside the window, below the top bar. */
   homeFov(topPad = 90) {
     const W = this.W, H = this.H;

@@ -20,7 +20,7 @@
   <div id="beacon" aria-hidden="true"></div>
   <div id="status" role="status">Fetching SPHEREx frames</div>
   <div id="prog-wrap" aria-hidden="true"><div id="prog-bar"></div></div>
-  <div id="loadBox" role="status"><span id="loadTxt"></span><button type="button" id="retryBtn">Retry</button></div>
+  <div id="loadBox" role="status"><span id="loadTxt"></span><button type="button" id="retryBtn">Retry</button><button type="button" id="exampleBtn">Open saved example: Barnard's Star</button></div>
   <div id="veil"></div>
 
   <section id="land">
@@ -78,6 +78,7 @@
   <header id="bar">
     <button id="brand" type="button"><img src="icons/favicon.svg" alt="" width="28" height="28">Draconid Drift</button>
     <nav>
+      <button id="backSky" type="button">← Back to sky</button>
       <button class="navb" data-page="discoveries" type="button">Discoveries</button>
       <button class="navb" data-page="compare" type="button">Compare</button>
       <button class="navb" data-page="how" type="button">How it works</button>
@@ -110,7 +111,7 @@
       </div></section>
     <section class="panel" id="pDepth" aria-label="3D map of this patch of sky: distance and time">
       <canvas id="depthCv"></canvas><div id="depthTags" aria-hidden="true"></div><canvas id="rulerCv" aria-hidden="true"></canvas>
-      <div class="lab"><h2>Distance &amp; time</h2><p id="depthCap"></p><p id="tLab"></p></div>
+      <div class="lab"><h2>Distance &amp; time</h2><p id="depthCap"></p><p id="tLab"></p><p class="dkey">Today: measured positions and distances (Gaia DR3, SIMBAD). Other times: calculated from each object's 3D velocity. Stars with no radial velocity move across the sky only. Objects with no measured distance are not shown.</p></div>
       <div id="depthTip" role="status"></div>
       <div id="depthWait">Placing every star and galaxy at its distance…</div>
     </section>
@@ -122,6 +123,7 @@
       <div class="blk"><h3>Brightness over time</h3><div class="lc" id="iLc"></div></div>
       <button id="timeBtn" type="button" title="Every star and galaxy in this patch placed at its real distance, moved back and forward in time">3D map: distance &amp; time</button>
       <div class="blk grow"><h3>In the frame</h3><ul class="objs" id="iObjs"></ul></div>
+      <div class="blk"><h3>Data behind this</h3><div class="dsrc" id="iData"></div></div>
     </aside>
   </main>
   <footer id="foot">
@@ -138,7 +140,7 @@
         <div class="pg paper" data-page="how">
       <h1>How Draconid Drift works</h1>
       <p class="lede">The data, the methods, and where each method stops working.</p>
-      <nav class="toc"><a href="#h-data">1 Data</a><a href="#h-cube">2 Exposures to a cube</a><a href="#h-motion">3 Motion</a><a href="#h-search">4 Finding unknown movers</a><a href="#h-spec">5 Spectra</a><a href="#h-lc">6 Brightness over time</a><a href="#h-frame">7 What is in the frame</a><a href="#h-3d">8 Distances and the 3D map</a><a href="#h-lim">9 Limits</a><a href="#h-ref">References</a></nav>
+      <nav class="toc"><a href="#h-data">1 Data</a><a href="#h-cube">2 Exposures to a cube</a><a href="#h-motion">3 Motion</a><a href="#h-search">4 Finding unknown movers</a><a href="#h-spec">5 Spectra</a><a href="#h-lc">6 Brightness over time</a><a href="#h-frame">7 What is in the frame</a><a href="#h-3d">8 Distances and the 3D map</a><a href="#h-read">9 Reading the results</a><a href="#h-lim">10 Limits</a><a href="#h-ref">References</a></nav>
 
       <h2 id="h-data">1 Data</h2>
       <table class="dt">
@@ -232,7 +234,13 @@
       $$ v_t\,[\mathrm{km\,s^{-1}}]=4.74\,\mu\,[''\,\mathrm{yr^{-1}}]\;d\,[\mathrm{pc}], $$
       <p>and with its radial velocity \(v_r\) (when Gaia measured one) its position after \(t\) years is \(\mathbf r(t)=\mathbf r_0+\mathbf v\,t\). The new distance is \(|\mathbf r(t)|\) and the new direction is the angle of \(\mathbf r(t)\); the tag next to each star shows the distance change \(|\mathbf r(t)|-|\mathbf r_0|\). Beyond \(10^5\) years a straight line stops being meaningful (stars orbit the Galaxy), so motion is frozen there; further back the slider instead highlights objects whose light left at that time.</p>
 
-      <h2 id="h-lim">9 Limits</h2>
+      <h2 id="h-read">9 Reading the results</h2>
+      <p><b>Where each result comes from.</b> Every object page lists its data under "Data behind this": the SPHEREx detector and its wavelength range, how many exposures were used, the first and last observation dates, and the comparison survey (2MASS around 2000 or AllWISE around 2010) with its band, wavelength and a link to the image source. The SPHEREx exposures themselves are public at NASA's IRSA archive.</p>
+      <p><b>The spectrum.</b> The horizontal axis is wavelength in micrometres (0.75 to 5 µm). The vertical axis is relative brightness: the star's flux in each exposure, with the scale chosen to fit the star, not an absolute calibration. Dots are single exposures, the line is a running median and the shaded band is its uncertainty. For a saturated star the core is unusable, so the shape is measured in the star's wings and marked as such.</p>
+      <p><b>Brightness over time.</b> Each exposure sees a different wavelength, so the star's own colour curve is removed first. The ± number is the robust scatter (1.4826 × the median absolute deviation) of the remaining single exposures. A star is called variable only if that scatter is larger than both 3 × the measurement noise and 8%, and exposures taken close together agree (lag-1 autocorrelation above 0.3). Otherwise the answer is "no clear change", with the reason: too few exposures, too faint, or exposures that scatter without a pattern. For saturated stars the answer comes from NEOWISE single exposures at 3.4 µm, shown with their years beside the result.</p>
+      <p><b>Real change or image difference?</b> The two panels can differ for reasons that are not change in the sky: they are taken at different wavelengths (dust and cool stars look different at 2 µm and 4 µm), at different resolutions (SPHEREx pixels are 6″), with small alignment errors, with saturation around bright stars, and with noise in faint sources. That is why motion is only claimed after the five checks in section 4 and brightness change only after the test above.</p>
+
+      <h2 id="h-lim">10 Limits</h2>
       <ul>
         <li>Within one six-month survey a pass covers each spot for a few days, so motions slower than about one pixel per year are not measurable from SPHEREx alone; the archive comparison stretches the baseline to 26 years.</li>
         <li>Very bright stars saturate; their spectra come from the wings and their brightness from NEOWISE, which itself shows a slow calibration drift for the brightest stars.</li>

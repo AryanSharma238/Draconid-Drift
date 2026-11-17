@@ -333,6 +333,7 @@ function makeOverlay() {
 
 async function go(item) {
   if (busy && view !== "view") return;
+  if (view === "home" && sky.a) homePos = [...sky.center(), sky.fov()];   // where the map was, for Back to sky
   if (SIDE && view === "home") await unSide();
   leaveLanding();
   if (curMap !== "tmass") setMap("tmass");
@@ -382,13 +383,14 @@ async function go(item) {
   setView("waiting"); tryReveal();
 }
 
-let progInterval = null, lastItem = null;
-const NOTICE = { barnard: "Watch the ringed star: it sits in a different place in 2010 and 2025. That shift is real motion across the sky.",
+let progInterval = null, lastItem = null, homePos = null;
+const NOTICE = { barnard: "Watch the ringed star: it sits in a different place in {old} and {new}. That shift is real motion across the sky.",
   rdra: "Watch the star's glow rise and fall between visits: R Draconis swells and fades over about eight months.",
   wise0855: "It is almost invisible in visible light but glows in the infrared: one of the coldest objects ever found outside the Solar System." };
 function showLoad(t, err = false) { $("loadTxt").textContent = t; const b = $("loadBox"); b.classList.add("on"); b.classList.toggle("err", err); }
 function hideLoad() { $("loadBox").classList.remove("on", "err"); }
 $("retryBtn").onclick = () => { hideLoad(); if (lastItem) setTimeout(() => go(lastItem), 400); };
+$("exampleBtn").onclick = () => { hideLoad(); const p = presetItems().find(x => x.key === "barnard"); if (p) setTimeout(() => go(p), 400); };
 function startProgressBar() {
   stopProgressBar();
   const bar = $("prog-bar");
@@ -433,7 +435,7 @@ async function tryReveal() {
   setView("settling");
   fillPage(res);
   { const n = NOTICE[req.key] || (Math.hypot(res.pmra || 0, res.pmdec || 0) > 300 ? "Compare the ringed positions: the dashed line shows how far this object moved between the two dates." : "Compare the two dates: anything that appears, fades or shifts between the panels has changed.");
-    const ne = $("iNotice"); if (ne) ne.textContent = n; }
+    const ne = $("iNotice"); if (ne) ne.textContent = n.replace("{old}", (res.compare && res.compare.year) || "the old image").replace("{new}", (res.dates && res.dates.length) ? res.dates[res.dates.length - 1].slice(0, 4) : "SPHEREx"); }
   loadFrames(res).then(() => { const s = $("frameSl"); s.max = Math.max(0, imgs.length - 1); });
   const wisePromise = (async () => {
     try {
@@ -484,8 +486,8 @@ async function leave(fromError = false) {
   if (overlay) { const o = overlay; overlay = null; o.style.transition = "opacity .5s"; o.style.opacity = "0"; setTimeout(() => o.remove(), 600); }
   setView("flying");
   app.classList.add("landing", "side"); SIDE = true; placeSide();
-  const c = sky.center();
-  await flyHome(c[0], 0, sky.homeFov(), 3200);
+  const c = sky.center(), hp = homePos;
+  await flyHome(hp ? hp[0] : c[0], hp ? hp[1] : 0, hp ? Math.min(hp[2], sky.homeFov()) : sky.homeFov(), 3200);
   setView("home"); fitBlend(); busy = false; req = null; sky.grid(false); autoCuts(); app.classList.remove("zoomed"); sky.startSpin(2.2); spinning = true;
 }
 // the three panels fold back into the full-screen sky (reverse of the reveal)
@@ -533,12 +535,17 @@ function fillPage(res) {
   $("wiseH").textContent = res.compare.name;
   $("wiseCap").textContent = res.compare.year || "2010";
   fillObjects(res);
+  { const ds = res.dates || [], cm = res.compare || {}, [w0, w1] = BAND_RANGE[detNum(res.detector)] || [0.75, 5];
+    const el = $("iData"); if (el) el.innerHTML = `<p>SPHEREx detector ${escH((res.detector || "").replace("SPHEREx-", ""))}, ${w0}–${w1} µm, ${ds.length} exposures${ds.length ? `, ${ds[0]} to ${ds[ds.length - 1]}` : ""}</p>`
+      + `<p>Compared with ${escH(cm.name || "")}${cm.band ? ` ${escH(cm.band)} band` : ""}${cm.um ? ` (${cm.um} µm)` : ""}, ${escH(String(cm.year || ""))}${cm.url ? ` · <a href="${escH(cm.url)}" target="_blank" rel="noopener">image source</a>` : ""}</p>`
+      + `<p><a href="https://irsa.ipac.caltech.edu/" target="_blank" rel="noopener">SPHEREx and archive data at IRSA</a></p>`; }
   drawSpectrum(); buildWave(res);
 }
 function paintLc(lc) {
-  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${lc.word}${lc.src ? `<small class="lcsrc">${lc.src}</small>` : ""}</span>`
+  const pending = lc && lc.sat && !lc.src;
+  $("iLc").innerHTML = lc ? `${lc.pts && lc.pts.length ? sparkline(lc.pts) : ""}<span>${pending ? "SPHEREx is saturated on this star: checking NEOWISE…" : lc.word}${lc.src ? `<small class="lcsrc">${lc.src}</small>` : ""}${pending ? `<small class="lcsrc">SPHEREx alone: ${lc.word}</small>` : ""}</span>`
+    + `<small class="lcwhy">± = scatter between exposures. Details in How it works.</small>`
     : `<span class="dim">Too few clean exposures to tell</span>`;
-  if (lc && lc.sat && !lc.src) $("iLc").querySelector("span").insertAdjacentHTML("beforeend", `<small class="lcsrc">Checking NEOWISE for a better answer…</small>`);
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthYr = s => (s ? `${MON[+s.slice(5, 7) - 1]} ${s.slice(0, 4)}` : "");
@@ -572,6 +579,7 @@ function drawSpectrum() {
   let g = `<rect x="${x(r[0])}" y="${T}" width="${x(r[1]) - x(r[0])}" height="${H - T - B}" class="band"/>`;
   for (const w of [1, 2, 3, 4]) g += `<text x="${x(w)}" y="${H - 4}" class="ax">${w}</text>`;
   g += `<text x="${W - R}" y="${H - 4}" class="ax end">5 µm</text>`;
+  g += `<text x="${(L + W - R) / 2}" y="${H + 9}" class="ax mid">wavelength (µm)</text><text transform="translate(8 ${(T + H - B) / 2}) rotate(-90)" class="ax mid">relative brightness</text>`;
   g += sp.pts.map(p => `<circle cx="${x(p[0]).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="1.3" class="pt"/>`).join("");
   const top = sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[3]).toFixed(1)}`).join("");
   const bot = sp.smooth.slice().reverse().map(s => `L${x(s[0]).toFixed(1)},${y(Math.max(s[2], lo / 2)).toFixed(1)}`).join("");
@@ -579,7 +587,7 @@ function drawSpectrum() {
   g += `<path d="${sp.smooth.map((s, i) => `${i ? "L" : "M"}${x(s[0]).toFixed(1)},${y(s[1]).toFixed(1)}`).join("")}" class="line"/>`;
   for (const f of sp.features) g += `<line x1="${x(f.wl)}" x2="${x(f.wl)}" y1="${T}" y2="${H - B}" class="ft"/><text x="${x(f.wl)}" y="${T - 3}" class="ftl">${f.label}</text>`;
   const note = sp.features.length ? "" : `<p class="specnote">No strong absorption features</p>`;
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spectrum of ${who}">${g}</svg>${note}${sp.wings ? `<p class="specnote">Saturated core: shape measured in the star's wings</p>` : ""}`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H + 12}" role="img" aria-label="Spectrum of ${who}">${g}</svg><p class="specnote2">Shaded band: measurement uncertainty</p>${note}${sp.wings ? `<p class="specnote">Saturated core: shape measured in the star's wings</p>` : ""}`;
 }
 
 /* ---------------------------------------------------------------- wavelength bar (bottom) */
@@ -1024,6 +1032,7 @@ function openAbout(which = "how") {
 }
 function closeAbout() { page = null; app.classList.remove("about"); document.querySelectorAll("#bar .navb").forEach(b => b.classList.remove("on")); }
 document.querySelectorAll("#bar .navb").forEach(b => b.onclick = () => (page === b.dataset.page ? closeAbout() : openAbout(b.dataset.page)));
+$("backSky").onclick = () => { if (view === "view" || view === "waiting") leave(); };
 $("brand").onclick = () => { closeSearch(true); if (app.classList.contains("about")) closeAbout(); if (view === "view" || view === "waiting") leave(); };
 
 /* ---------------------------------------------------------------- Discoveries and Compare */
@@ -1363,7 +1372,7 @@ function updateLive() {
   const f = sky.fov(), c = ptr || sky.center(), whole = f > 150 && !ptr;
   const [l, b] = galactic(c[0], c[1]), [sa, sd] = sexa(c[0], c[1]);
   const band = Math.abs(b) < 5 ? "in the Milky Way's plane" : Math.abs(b) < 20 ? "near the Milky Way" : Math.abs(b) > 60 ? "far from the Milky Way" : "away from the Milky Way";
-  const where = whole ? "The whole sky" : `${constellation(c[0], c[1])}, ${band}`;
+  const where = whole ? "The whole sky" : `Constellation ${constellation(c[0], c[1])} · ${band}`;
   const key = [whole, sa, sd, f.toFixed(3), curMap, !!ptr].join("|"); if (key === lastLive) return; lastLive = key;
   $("lvPos").textContent = whole ? "Whole sky" : `${sa}  ${sd}`;
   $("lvFov").textContent = whole ? "360° × 180°" : fovTxt(f);
@@ -1441,7 +1450,7 @@ async function startTour() {
   say("Flying there while every SPHEREx image loads…", null, "", "");
   if (!await waitFor(() => view === "view", 120000)) return endTour();
   await sleep(900);
-  if (!await say("<b>Then and now.</b> Left: 2MASS around 2000. Right: SPHEREx today. Watch the star jump.", [S("#pWise"), S("#pSpx")], N())) return;
+  if (!await say(`<b>Then and now.</b> Left: ${(last_res && last_res.compare && last_res.compare.name) || "the old survey"}, ${(last_res && last_res.compare && last_res.compare.year) || ""}. Right: SPHEREx, ${(last_res && last_res.dates && last_res.dates.length) ? monthYr(last_res.dates[0]) + " to " + monthYr(last_res.dates[last_res.dates.length - 1]) : "today"}. Watch the star move.`, [S("#pWise"), S("#pSpx")], N())) return;
   if (!await say("<b>Wavelength.</b> Six ranges from 0.75 to 5 µm.", S("#foot #wave"), N())) return;
   if (!await say("<b>The star.</b> Distance, temperature, spectrum and brightness.", S("#info"), N())) return;
   if (!await say("<b>In the frame.</b> Everything bright here. Hover to ring it.", S("#iObjs"), N())) return;

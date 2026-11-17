@@ -696,7 +696,7 @@ body{font-size:15px}
 #about .dim{color:var(--dim);font-size:14px}
 @media (max-width:760px){#about .dhead{display:none}#about .dlist button{grid-template-columns:1fr 1fr}}
 
-.lab h2{color:#2e1a1f}
+.lab h2{color:#f1e6e8}
 #info{background:var(--bg2)!important}
 
 /* once the home screen is left, the hero never shows through again while the overlay fades */
@@ -766,3 +766,31 @@ body{font-size:15px}
 
 #app.touring.deep #tourBlock{display:none}
 .cform #cra,.cform #cdec{flex:1;min-width:0}
+
+.lab h2,.blk h3,#info .blk h3,#specH{color:#f1e6e8}
+#pSpx .speed{left:12px;right:12px;max-width:calc(100% - 24px);flex-wrap:wrap;justify-content:flex-end;box-sizing:border-box}
+#frameSl{width:auto;flex:1 1 60px;min-width:50px;max-width:160px}
+#frameDate{min-width:0}
+#exampleBtn{display:none;padding:6px 12px;border-radius:6px;background:transparent;color:#f1e3e6;border:1px solid #e08a98;font-weight:600;cursor:pointer}
+#loadBox.err #exampleBtn{display:inline-block}
+#backSky{display:none;padding:7px 12px;border-radius:6px;background:#3a1d23;color:#f1e6e8;font:600 14px/1 inherit;cursor:pointer;margin-right:8px}
+#app.shown #backSky{display:inline-block}
+.lcwhy{display:block;font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.35}
+.dsrc p{font-size:12.5px;color:var(--dim);margin:2px 0;line-height:1.35}
+.dsrc a{color:#e08a98}
+#info .spec .ax.mid{text-anchor:middle}
+.specnote2{font-size:11.5px;color:var(--dim);margin:2px 0 0}
+.dkey{font-size:12px!important;color:var(--dim)!important;max-width:360px;line-height:1.4;margin-top:8px}
+#info .lc{flex-wrap:wrap}
+#info .lc .lcwhy{flex-basis:100%}
+#info .spec .specnote{position:static;margin:2px 0 0}
+#page2 #info{overflow-y:auto!important;overscroll-behavior:contain;min-height:0;scrollbar-width:thin}
+#info .blk.grow{flex:none}
+/* frame list: no fade, compact rows, and the panel above it tightened so more of the list shows */
+.objs{-webkit-mask-image:none!important;mask-image:none!important;padding-bottom:4px!important;overflow:visible!important;flex:none!important;gap:2px!important}
+.objs li{padding:3px 4px!important;gap:10px!important}
+.objs .th{width:30px!important;height:30px!important;border-radius:4px!important}
+.objs .nm{font-size:13px!important}.objs .kd{font-size:12px!important}
+#info .blk{margin-top:10px!important;padding-top:10px!important}
+#info .spec svg{max-height:110px}
+#timeBtn{margin:10px 0!important;padding:9px!important}
